@@ -1112,6 +1112,7 @@ function ImportPage({ items, onImport }: { items: GovernanceItem[]; onImport: (r
   const [previews, setPreviews] = useState<Awaited<ReturnType<typeof previewWorkbook>>>([])
   const [status, setStatus] = useState('')
   const [commitResult, setCommitResult] = useState<{ inserted: number; updated: number; skipped: number; message?: string } | null>(null)
+  const [commitError, setCommitError] = useState('')
   const [isCommitting, setIsCommitting] = useState(false)
 
   const importPlan = useMemo(() => {
@@ -1134,6 +1135,7 @@ function ImportPage({ items, onImport }: { items: GovernanceItem[]; onImport: (r
     if (!file) return
     setStatus('Reading workbook')
     setCommitResult(null)
+    setCommitError('')
     try {
       const preview = await previewWorkbook(file)
       setPreviews(preview)
@@ -1150,6 +1152,7 @@ function ImportPage({ items, onImport }: { items: GovernanceItem[]; onImport: (r
     if (importPlan.records.length === 0) return
     setIsCommitting(true)
     setCommitResult(null)
+    setCommitError('')
     setStatus('Committing import')
     try {
       if (isSupabaseConfigured) {
@@ -1158,6 +1161,8 @@ function ImportPage({ items, onImport }: { items: GovernanceItem[]; onImport: (r
         } = await supabase!.auth.getSession()
         if (!session?.access_token) throw new Error('Sign in again before importing.')
 
+        const controller = new AbortController()
+        const timeout = window.setTimeout(() => controller.abort(), 60000)
         const response = await fetch('/.netlify/functions/workbook-import-commit', {
           method: 'POST',
           headers: {
@@ -1165,7 +1170,8 @@ function ImportPage({ items, onImport }: { items: GovernanceItem[]; onImport: (r
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ records: importPlan.records }),
-        })
+          signal: controller.signal,
+        }).finally(() => window.clearTimeout(timeout))
         const result = (await response.json().catch(() => ({}))) as { inserted?: number; updated?: number; skipped?: number; message?: string; error?: string }
         if (!response.ok) throw new Error(result.error ?? result.message ?? 'Import commit failed')
 
@@ -1189,7 +1195,9 @@ function ImportPage({ items, onImport }: { items: GovernanceItem[]; onImport: (r
       }
     } catch (error) {
       console.error(error)
-      setStatus(readErrorMessage(error, 'Import commit failed.'))
+      const message = readErrorMessage(error, 'Import commit failed.')
+      setCommitError(message === 'The operation was aborted.' ? 'Import commit timed out after 60 seconds. Try again or reduce the workbook size.' : message)
+      setStatus('Import commit failed')
     } finally {
       setIsCommitting(false)
     }
@@ -1198,6 +1206,7 @@ function ImportPage({ items, onImport }: { items: GovernanceItem[]; onImport: (r
   function clearPreview() {
     setPreviews([])
     setCommitResult(null)
+    setCommitError('')
     setStatus('')
   }
 
@@ -1250,6 +1259,12 @@ function ImportPage({ items, onImport }: { items: GovernanceItem[]; onImport: (r
               <strong>Import complete</strong>
               <span>{commitResult.inserted} inserted · {commitResult.updated} updated · {commitResult.skipped} skipped</span>
               {commitResult.message && <p>{commitResult.message}</p>}
+            </div>
+          )}
+          {commitError && (
+            <div className="import-result import-error">
+              <strong>Import failed</strong>
+              <span>{commitError}</span>
             </div>
           )}
         </section>

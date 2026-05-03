@@ -963,6 +963,12 @@ tr.is-closed {
   background: var(--green-soft);
 }
 
+.import-result.import-error {
+  border-color: #f0aaa9;
+  color: var(--red);
+  background: var(--red-soft);
+}
+
 .import-result p {
   margin-top: 4px;
 }
