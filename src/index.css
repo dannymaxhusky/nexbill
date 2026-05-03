@@ -57,6 +57,95 @@ button:disabled {
   grid-template-columns: 280px minmax(0, 1fr);
 }
 
+.login-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: #eef2f7;
+}
+
+.login-card {
+  width: min(920px, 100%);
+  display: grid;
+  grid-template-columns: 0.95fr 1.05fr;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.login-brand {
+  display: grid;
+  align-content: center;
+  gap: 14px;
+  min-height: 420px;
+  padding: 34px;
+  color: #e5edf8;
+  background: #111827;
+}
+
+.login-brand .brand-mark {
+  background: #f8fafc;
+  color: #111827;
+}
+
+.login-brand .eyebrow {
+  color: #9ca3af;
+}
+
+.login-brand h1 {
+  margin: 0;
+  font-size: 34px;
+  letter-spacing: 0;
+}
+
+.login-brand p {
+  margin: 0;
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+
+.login-form {
+  display: grid;
+  align-content: center;
+  gap: 14px;
+  padding: 34px;
+}
+
+.login-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.login-form input {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+  padding: 12px;
+  outline: 0;
+}
+
+.auth-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.auth-message {
+  padding: 10px 12px;
+  border: 1px solid #f7d27a;
+  border-radius: 7px;
+  color: var(--amber);
+  background: var(--amber-soft);
+  line-height: 1.4;
+}
+
 .sidebar {
   position: sticky;
   top: 0;
@@ -230,7 +319,9 @@ button:disabled {
 
 .config-banner,
 .loading-line,
+.notice-line,
 .auth-strip,
+.account-panel,
 .user-strip,
 .module-intro,
 .import-drop {
@@ -241,7 +332,8 @@ button:disabled {
 }
 
 .config-banner,
-.loading-line {
+.loading-line,
+.notice-line {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -252,12 +344,19 @@ button:disabled {
   border-color: #f7d27a;
 }
 
+.notice-line {
+  color: var(--blue);
+  background: var(--blue-soft);
+  border-color: #b8ccff;
+}
+
 .auth-strip {
   padding: 10px;
   margin-bottom: 14px;
 }
 
 .auth-strip form,
+.account-panel form,
 .user-strip,
 .register-toolbar,
 .report-controls {
@@ -271,7 +370,32 @@ button:disabled {
   justify-content: flex-start;
 }
 
+.account-panel {
+  padding: 12px 14px;
+  margin-bottom: 18px;
+}
+
+.account-panel form {
+  justify-content: flex-start;
+}
+
+.account-panel label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.account-panel span {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .auth-strip input,
+.account-panel input,
 .user-strip select,
 .register-toolbar select,
 .form-grid input,
@@ -293,7 +417,8 @@ button:disabled {
   margin-bottom: 18px;
 }
 
-.user-strip > div {
+.user-strip > div,
+.user-actions {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -868,6 +993,23 @@ tr.is-closed {
 }
 
 @media (max-width: 900px) {
+  .login-screen {
+    padding: 14px;
+  }
+
+  .login-card {
+    grid-template-columns: 1fr;
+  }
+
+  .login-brand {
+    min-height: auto;
+    padding: 24px;
+  }
+
+  .login-form {
+    padding: 24px;
+  }
+
   .workspace {
     padding: 14px;
   }
@@ -884,6 +1026,11 @@ tr.is-closed {
   }
 
   .auth-strip form {
+    flex-wrap: wrap;
+  }
+
+  .account-panel form,
+  .user-actions {
     flex-wrap: wrap;
   }
 

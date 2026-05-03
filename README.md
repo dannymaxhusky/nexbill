@@ -40,7 +40,11 @@ Use `.env.example` as the starting point. `VITE_SUPABASE_ANON_KEY` is also suppo
 2. Run `supabase/migrations/202605030001_initial_schema.sql` in the SQL editor.
 3. Create users in Supabase Auth.
 4. Insert matching rows into `profiles` and `user_roles`.
-5. Set the Netlify environment variables:
+5. In Supabase Auth URL configuration, set the production Site URL to the Netlify URL, for example `https://nexbill-pm.netlify.app`, and add redirect URLs for production and local development:
+   - `https://nexbill-pm.netlify.app/**`
+   - `http://localhost:5173/**`
+6. For production invites, magic links, and password recovery, configure a custom SMTP provider in Supabase Auth email settings. Supabase's default email sender is rate-limited and is only suitable for early testing.
+7. Set the Netlify environment variables:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_PUBLISHABLE_KEY`
    - `SUPABASE_URL`

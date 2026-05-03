@@ -26,7 +26,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { moduleConfigByKey, moduleConfigs, phaseOptions, roleLabels, workstreamOptions } from './data/moduleConfig'
 import { demoItems, demoReports, demoUsers } from './data/demoData'
@@ -38,6 +38,7 @@ import { moduleImportCoverage, previewWorkbook } from './lib/workbookImport'
 import type { GovernanceItem, ModuleConfig, ModuleKey, ReportDraft, ReportType, UserProfile, ViewMode } from './types'
 
 type PageKey = 'dashboard' | 'registers' | 'reporting' | 'program_site' | 'import' | 'admin' | 'audit'
+type AuthStatus = 'checking' | 'signed_out' | 'signed_in'
 
 const navItems: Array<{ key: PageKey; label: string; icon: typeof LayoutDashboard }> = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -71,6 +72,8 @@ function App() {
   const [page, setPage] = useState<PageKey>('dashboard')
   const [items, setItems] = useState<GovernanceItem[]>(() => (isSupabaseConfigured ? [] : demoItems))
   const [user, setUser] = useState<UserProfile>(demoUsers[0])
+  const [authStatus, setAuthStatus] = useState<AuthStatus>(() => (isSupabaseConfigured ? 'checking' : 'signed_in'))
+  const [authNotice, setAuthNotice] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('my')
   const [showClosed, setShowClosed] = useState(false)
   const [selectedModule, setSelectedModule] = useState<ModuleKey>('actions')
@@ -79,24 +82,79 @@ function App() {
   const [loadingMessage, setLoadingMessage] = useState('')
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [passwordMessage, setPasswordMessage] = useState('')
+  const [passwordPanelOpen, setPasswordPanelOpen] = useState(() => hasPasswordSetupHash())
+
+  const loadAuthenticatedWorkspace = useCallback(async () => {
+    if (!supabase) return
+
+    setLoadingMessage('Loading NexBill data')
+    try {
+      const [profile, remoteItems] = await Promise.all([fetchProfile(), fetchGovernanceItems()])
+      if (profile) setUser(profile)
+      setItems(remoteItems)
+      setAuthStatus('signed_in')
+      setAuthNotice('')
+      cleanAuthHash()
+    } catch (error) {
+      console.error(error)
+      setItems([])
+      setAuthStatus('signed_in')
+      setAuthNotice(readErrorMessage(error, 'Signed in, but live governance data could not be loaded.'))
+    } finally {
+      setLoadingMessage('')
+    }
+  }, [])
 
   useEffect(() => {
-    async function loadSupabaseData() {
-      if (!isSupabaseConfigured) return
-      setLoadingMessage('Loading NexBill data')
+    if (!isSupabaseConfigured || !supabase) return
+    const client = supabase
+
+    async function initializeAuth() {
+      setLoadingMessage('Checking session')
       try {
-        const [profile, remoteItems] = await Promise.all([fetchProfile(), fetchGovernanceItems()])
-        if (profile) setUser(profile)
-        setItems(remoteItems)
+        const {
+          data: { session },
+          error,
+        } = await client.auth.getSession()
+        if (error) throw error
+
+        if (!session) {
+          setAuthStatus('signed_out')
+          setItems([])
+          return
+        }
+
+        await loadAuthenticatedWorkspace()
       } catch (error) {
         console.error(error)
+        setAuthStatus('signed_out')
+        setAuthNotice(readErrorMessage(error, 'Supabase session could not be checked.'))
       } finally {
         setLoadingMessage('')
       }
     }
 
-    void loadSupabaseData()
-  }, [])
+    const {
+      data: { subscription },
+    } = client.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') setPasswordPanelOpen(true)
+      if (!session) {
+        setAuthStatus('signed_out')
+        setItems([])
+        return
+      }
+
+      setAuthStatus('signed_in')
+      window.setTimeout(() => {
+        void loadAuthenticatedWorkspace()
+      }, 0)
+    })
+
+    void initializeAuth()
+    return () => subscription.unsubscribe()
+  }, [loadAuthenticatedWorkspace])
 
   const filteredItems = useMemo(() => {
     const scoped = filterForView(items, user, viewMode, showClosed)
@@ -140,19 +198,120 @@ function App() {
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase) return
+    setAuthNotice('')
     setLoadingMessage('Signing in')
     try {
       const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword })
       if (error) throw error
-      const profile = await fetchProfile()
-      const remoteItems = await fetchGovernanceItems()
-      if (profile) setUser(profile)
-      setItems(remoteItems)
+      await loadAuthenticatedWorkspace()
     } catch (error) {
       console.error(error)
+      setAuthNotice(readErrorMessage(error, 'Sign in failed.'))
     } finally {
       setLoadingMessage('')
     }
+  }
+
+  async function handleMagicLink() {
+    if (!supabase) return
+    if (!authEmail.trim()) {
+      setAuthNotice('Enter an email address first.')
+      return
+    }
+
+    setAuthNotice('')
+    setLoadingMessage('Sending magic link')
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: authEmail.trim(),
+        options: { emailRedirectTo: window.location.origin },
+      })
+      if (error) throw error
+      setAuthNotice('Magic link sent. Check the inbox for the NexBill sign-in email.')
+    } catch (error) {
+      console.error(error)
+      setAuthNotice(readErrorMessage(error, 'Magic link could not be sent.'))
+    } finally {
+      setLoadingMessage('')
+    }
+  }
+
+  async function handlePasswordReset() {
+    if (!supabase) return
+    if (!authEmail.trim()) {
+      setAuthNotice('Enter an email address first.')
+      return
+    }
+
+    setAuthNotice('')
+    setLoadingMessage('Sending reset link')
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(authEmail.trim(), {
+        redirectTo: window.location.origin,
+      })
+      if (error) throw error
+      setAuthNotice('Password reset link sent. Open it to set a new password.')
+    } catch (error) {
+      console.error(error)
+      setAuthNotice(readErrorMessage(error, 'Password reset email could not be sent.'))
+    } finally {
+      setLoadingMessage('')
+    }
+  }
+
+  async function handleUpdatePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase) return
+    if (newPassword.length < 8) {
+      setPasswordMessage('Password must be at least 8 characters.')
+      return
+    }
+
+    setPasswordMessage('')
+    setLoadingMessage('Updating password')
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      if (error) throw error
+      setNewPassword('')
+      setPasswordMessage('')
+      setAuthNotice('Password updated. Email and password sign-in is now available.')
+      setPasswordPanelOpen(false)
+    } catch (error) {
+      console.error(error)
+      setPasswordMessage(readErrorMessage(error, 'Password could not be updated.'))
+    } finally {
+      setLoadingMessage('')
+    }
+  }
+
+  async function handleSignOut() {
+    if (!supabase) return
+    setLoadingMessage('Signing out')
+    try {
+      await supabase.auth.signOut()
+    } finally {
+      setUser(demoUsers[0])
+      setItems([])
+      setAuthStatus('signed_out')
+      setLoadingMessage('')
+    }
+  }
+
+  if (isSupabaseConfigured && authStatus !== 'signed_in') {
+    return (
+      <LoginPage
+        authEmail={authEmail}
+        authPassword={authPassword}
+        authNotice={authNotice}
+        authStatus={authStatus}
+        loadingMessage={loadingMessage}
+        setAuthEmail={setAuthEmail}
+        setAuthPassword={setAuthPassword}
+        onSignIn={handleSignIn}
+        onMagicLink={handleMagicLink}
+        onPasswordReset={handlePasswordReset}
+      />
+    )
   }
 
   return (
@@ -231,17 +390,6 @@ function App() {
           </div>
         )}
 
-        {isSupabaseConfigured && (
-          <section className="auth-strip">
-            <form onSubmit={handleSignIn}>
-              <UserRound size={16} />
-              <input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="Email" />
-              <input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="Password" type="password" />
-              <button className="button secondary" type="submit">Sign in</button>
-            </form>
-          </section>
-        )}
-
         <section className="user-strip">
           <div>
             <span className="avatar">{user.fullName.slice(0, 1)}</span>
@@ -250,14 +398,41 @@ function App() {
               <span>{roleLabels[user.role]} · {user.workstream ?? 'All workstreams'}</span>
             </div>
           </div>
-          <select value={user.id} onChange={(event) => setUser(demoUsers.find((candidate) => candidate.id === event.target.value) ?? demoUsers[0])}>
-            {demoUsers.map((candidate) => (
-              <option key={candidate.id} value={candidate.id}>{candidate.fullName} · {roleLabels[candidate.role]}</option>
-            ))}
-          </select>
+          {isSupabaseConfigured ? (
+            <div className="user-actions">
+              <button className="button secondary" onClick={() => setPasswordPanelOpen((open) => !open)}>
+                <KeyRound size={16} />
+                Password
+              </button>
+              <button className="button secondary" onClick={handleSignOut}>
+                <Lock size={16} />
+                Sign out
+              </button>
+            </div>
+          ) : (
+            <select value={user.id} onChange={(event) => setUser(demoUsers.find((candidate) => candidate.id === event.target.value) ?? demoUsers[0])}>
+              {demoUsers.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>{candidate.fullName} · {roleLabels[candidate.role]}</option>
+              ))}
+            </select>
+          )}
         </section>
 
         {loadingMessage && <div className="loading-line">{loadingMessage}</div>}
+        {authNotice && <div className="notice-line">{authNotice}</div>}
+        {isSupabaseConfigured && passwordPanelOpen && (
+          <section className="account-panel">
+            <form onSubmit={handleUpdatePassword}>
+              <KeyRound size={18} />
+              <label>
+                Account password
+                <input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} type="password" placeholder="New password" />
+              </label>
+              <button className="button primary" type="submit">Update password</button>
+            </form>
+            {passwordMessage && <span>{passwordMessage}</span>}
+          </section>
+        )}
 
         {page === 'dashboard' && (
           <Dashboard metrics={metrics} items={filteredItems} user={user} onOpenRegisters={(moduleKey) => {
@@ -285,9 +460,89 @@ function App() {
   )
 }
 
+function LoginPage({
+  authEmail,
+  authPassword,
+  authNotice,
+  authStatus,
+  loadingMessage,
+  setAuthEmail,
+  setAuthPassword,
+  onSignIn,
+  onMagicLink,
+  onPasswordReset,
+}: {
+  authEmail: string
+  authPassword: string
+  authNotice: string
+  authStatus: AuthStatus
+  loadingMessage: string
+  setAuthEmail: (value: string) => void
+  setAuthPassword: (value: string) => void
+  onSignIn: (event: FormEvent<HTMLFormElement>) => void
+  onMagicLink: () => void
+  onPasswordReset: () => void
+}) {
+  const busy = authStatus === 'checking' || Boolean(loadingMessage)
+
+  return (
+    <main className="login-screen">
+      <section className="login-card">
+        <div className="login-brand">
+          <div className="brand-mark">NB</div>
+          <p className="eyebrow">NexBill Project Governance</p>
+          <h1>Sign in to continue</h1>
+          <p>Access is controlled by Supabase Auth and project roles.</p>
+        </div>
+
+        <form className="login-form" onSubmit={onSignIn}>
+          <label>
+            Email
+            <input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} autoComplete="email" placeholder="name@company.com" type="email" />
+          </label>
+          <label>
+            Password
+            <input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} autoComplete="current-password" placeholder="Password" type="password" />
+          </label>
+
+          <button className="button primary" disabled={busy || !authEmail || !authPassword} type="submit">
+            <Lock size={16} />
+            Sign in
+          </button>
+
+          <div className="auth-options">
+            <button className="button secondary" disabled={busy || !authEmail} onClick={onMagicLink} type="button">Magic link</button>
+            <button className="button secondary" disabled={busy || !authEmail} onClick={onPasswordReset} type="button">Reset password</button>
+          </div>
+
+          {(loadingMessage || authNotice) && (
+            <div className="auth-message">{loadingMessage || authNotice}</div>
+          )}
+        </form>
+      </section>
+    </main>
+  )
+}
+
 function pageTitle(page: PageKey) {
   const item = navItems.find((nav) => nav.key === page)
   return item?.label ?? 'Dashboard'
+}
+
+function hasPasswordSetupHash() {
+  if (typeof window === 'undefined') return false
+  const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  const type = params.get('type')
+  return type === 'recovery' || type === 'invite'
+}
+
+function cleanAuthHash() {
+  if (typeof window === 'undefined' || !window.location.hash.includes('access_token')) return
+  window.history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}`)
+}
+
+function readErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback
 }
 
 function SegmentedView({ viewMode, setViewMode }: { viewMode: ViewMode; setViewMode: (mode: ViewMode) => void }) {
