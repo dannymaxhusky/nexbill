@@ -69,7 +69,7 @@ const moduleIcons: Record<ModuleKey, typeof ClipboardList> = {
 
 function App() {
   const [page, setPage] = useState<PageKey>('dashboard')
-  const [items, setItems] = useState<GovernanceItem[]>(demoItems)
+  const [items, setItems] = useState<GovernanceItem[]>(() => (isSupabaseConfigured ? [] : demoItems))
   const [user, setUser] = useState<UserProfile>(demoUsers[0])
   const [viewMode, setViewMode] = useState<ViewMode>('my')
   const [showClosed, setShowClosed] = useState(false)
@@ -87,7 +87,7 @@ function App() {
       try {
         const [profile, remoteItems] = await Promise.all([fetchProfile(), fetchGovernanceItems()])
         if (profile) setUser(profile)
-        if (remoteItems.length > 0) setItems(remoteItems)
+        setItems(remoteItems)
       } catch (error) {
         console.error(error)
       } finally {
@@ -147,7 +147,7 @@ function App() {
       const profile = await fetchProfile()
       const remoteItems = await fetchGovernanceItems()
       if (profile) setUser(profile)
-      if (remoteItems.length > 0) setItems(remoteItems)
+      setItems(remoteItems)
     } catch (error) {
       console.error(error)
     } finally {
