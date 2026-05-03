@@ -452,7 +452,7 @@ function App() {
         )}
         {page === 'reporting' && <ReportingPage items={filteredItems} user={user} />}
         {page === 'program_site' && <ProgramSitePage items={items} reports={demoReports} />}
-        {page === 'import' && <ImportPage items={items} onImport={(records) => setItems((current) => [...records, ...current])} />}
+        {page === 'import' && <ImportPage items={items} onImport={(records) => setItems((current) => mergeImportedItems(current, records))} />}
         {page === 'admin' && <AdminPage user={user} />}
         {page === 'audit' && <AuditPage items={items} user={user} />}
       </main>
@@ -543,6 +543,11 @@ function cleanAuthHash() {
 
 function readErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback
+}
+
+function mergeImportedItems(current: GovernanceItem[], records: GovernanceItem[]) {
+  const importedCodes = new Set(records.map((record) => record.itemCode))
+  return [...records, ...current.filter((item) => !importedCodes.has(item.itemCode))]
 }
 
 function SegmentedView({ viewMode, setViewMode }: { viewMode: ViewMode; setViewMode: (mode: ViewMode) => void }) {
@@ -1106,36 +1111,94 @@ function ProgramSitePage({ items, reports }: { items: GovernanceItem[]; reports:
 function ImportPage({ items, onImport }: { items: GovernanceItem[]; onImport: (records: GovernanceItem[]) => void }) {
   const [previews, setPreviews] = useState<Awaited<ReturnType<typeof previewWorkbook>>>([])
   const [status, setStatus] = useState('')
+  const [commitResult, setCommitResult] = useState<{ inserted: number; updated: number; skipped: number; message?: string } | null>(null)
+  const [isCommitting, setIsCommitting] = useState(false)
+
+  const importPlan = useMemo(() => {
+    const records = previews.flatMap((preview) => preview.mappedRecords)
+    const existingCodes = new Set(items.map((item) => item.itemCode))
+    const existingRecords = records.filter((record) => existingCodes.has(record.itemCode))
+    const newRecords = records.filter((record) => !existingCodes.has(record.itemCode))
+    const missingHeaders = previews.reduce((sum, preview) => sum + preview.missingHeaders.length, 0)
+
+    return {
+      records,
+      existingRecords,
+      newRecords,
+      missingHeaders,
+      moduleCount: new Set(records.map((record) => record.module)).size,
+    }
+  }, [items, previews])
 
   async function handleFile(file?: File) {
     if (!file) return
     setStatus('Reading workbook')
+    setCommitResult(null)
     try {
       const preview = await previewWorkbook(file)
       setPreviews(preview)
-      setStatus(`${preview.reduce((sum, item) => sum + item.mappedRecords.length, 0)} records mapped`)
+      const mappedCount = preview.reduce((sum, item) => sum + item.mappedRecords.length, 0)
+      setStatus(`${mappedCount} records mapped. Review the preview, then confirm import.`)
     } catch (error) {
       console.error(error)
+      setPreviews([])
       setStatus('Workbook preview failed')
     }
   }
 
   async function commitPreview() {
-    const records = previews.flatMap((preview) => preview.mappedRecords)
-    const existingCodes = new Set(items.map((item) => item.itemCode))
-    const newRecords = records.filter((record) => !existingCodes.has(record.itemCode))
-    onImport(newRecords)
-    setStatus(`${newRecords.length} new records added locally`)
-
+    if (importPlan.records.length === 0) return
+    setIsCommitting(true)
+    setCommitResult(null)
+    setStatus('Committing import')
     try {
-      await fetch('/.netlify/functions/workbook-import-commit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ records: newRecords }),
-      })
-    } catch {
-      // Local commit still keeps the preview useful without Netlify dev.
+      if (isSupabaseConfigured) {
+        const {
+          data: { session },
+        } = await supabase!.auth.getSession()
+        if (!session?.access_token) throw new Error('Sign in again before importing.')
+
+        const response = await fetch('/.netlify/functions/workbook-import-commit', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ records: importPlan.records }),
+        })
+        const result = (await response.json().catch(() => ({}))) as { inserted?: number; updated?: number; skipped?: number; message?: string; error?: string }
+        if (!response.ok) throw new Error(result.error ?? result.message ?? 'Import commit failed')
+
+        onImport(importPlan.records)
+        setCommitResult({
+          inserted: result.inserted ?? importPlan.newRecords.length,
+          updated: result.updated ?? importPlan.existingRecords.length,
+          skipped: result.skipped ?? 0,
+          message: result.message,
+        })
+        setStatus(`Import confirmed: ${result.inserted ?? importPlan.newRecords.length} inserted, ${result.updated ?? importPlan.existingRecords.length} updated.`)
+      } else {
+        onImport(importPlan.newRecords)
+        setCommitResult({
+          inserted: importPlan.newRecords.length,
+          updated: 0,
+          skipped: importPlan.existingRecords.length,
+          message: 'Demo mode import only updates the browser state.',
+        })
+        setStatus(`${importPlan.newRecords.length} new records added locally.`)
+      }
+    } catch (error) {
+      console.error(error)
+      setStatus(readErrorMessage(error, 'Import commit failed.'))
+    } finally {
+      setIsCommitting(false)
     }
+  }
+
+  function clearPreview() {
+    setPreviews([])
+    setCommitResult(null)
+    setStatus('')
   }
 
   return (
@@ -1147,8 +1210,50 @@ function ImportPage({ items, onImport }: { items: GovernanceItem[]; onImport: (r
           <p>{status || 'Select the NexBill governance workbook.'}</p>
         </div>
         <input type="file" accept=".xlsx,.xls" onChange={(event) => void handleFile(event.target.files?.[0])} />
-        <button className="button primary" disabled={previews.length === 0} onClick={commitPreview}>Commit preview</button>
+        <button className="button secondary" disabled={previews.length === 0 || isCommitting} onClick={clearPreview}>Clear preview</button>
       </section>
+
+      {previews.length > 0 && (
+        <section className="panel import-review">
+          <div>
+            <PanelHeader title="Import review" icon={CheckCircle2} />
+            <p>
+              Confirming import will upsert records by Item ID, preserve source sheet references, and update the live Supabase register.
+            </p>
+          </div>
+          <div className="import-stats">
+            <div>
+              <strong>{importPlan.records.length}</strong>
+              <span>mapped</span>
+            </div>
+            <div>
+              <strong>{importPlan.newRecords.length}</strong>
+              <span>new</span>
+            </div>
+            <div>
+              <strong>{importPlan.existingRecords.length}</strong>
+              <span>existing IDs</span>
+            </div>
+            <div>
+              <strong>{importPlan.moduleCount}</strong>
+              <span>modules</span>
+            </div>
+          </div>
+          <div className="preview-actions">
+            <span>{importPlan.missingHeaders} missing headers across mapped modules</span>
+            <button className="button primary" disabled={isCommitting || importPlan.records.length === 0} onClick={commitPreview}>
+              {isCommitting ? 'Importing' : 'Confirm import'}
+            </button>
+          </div>
+          {commitResult && (
+            <div className="import-result">
+              <strong>Import complete</strong>
+              <span>{commitResult.inserted} inserted · {commitResult.updated} updated · {commitResult.skipped} skipped</span>
+              {commitResult.message && <p>{commitResult.message}</p>}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="panel">
         <PanelHeader title="Import coverage" icon={Database} />

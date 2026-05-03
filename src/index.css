@@ -900,6 +900,73 @@ tr.is-closed {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.import-review {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(420px, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.import-review p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.import-review .panel-header {
+  margin-bottom: 8px;
+}
+
+.import-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.import-stats div,
+.import-result {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  padding: 10px;
+}
+
+.import-stats strong,
+.import-stats span,
+.import-result strong,
+.import-result span {
+  display: block;
+}
+
+.import-stats strong {
+  font-size: 22px;
+}
+
+.import-stats span,
+.preview-actions span,
+.import-result span,
+.import-result p {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.preview-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.import-result {
+  grid-column: 1 / -1;
+  border-color: #a8d8bd;
+  color: var(--green);
+  background: var(--green-soft);
+}
+
+.import-result p {
+  margin-top: 4px;
+}
+
 .coverage-grid strong,
 .coverage-grid span,
 .coverage-grid em,
@@ -1037,11 +1104,20 @@ tr.is-closed {
   .metric-grid,
   .dashboard-grid,
   .report-layout,
+  .import-review,
   .admin-grid,
   .program-site-grid,
   .coverage-grid,
   .preview-grid {
     grid-template-columns: 1fr;
+  }
+
+  .import-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .preview-actions {
+    justify-items: stretch;
   }
 
   .module-health-grid {
