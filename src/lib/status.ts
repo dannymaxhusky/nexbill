@@ -1,4 +1,5 @@
 import type { GovernanceItem, Role, UserProfile, ViewMode } from '../types'
+import { riskLevelRank } from '../data/riskMatrix'
 
 export const closedStatusTerms = ['closed', 'completed', 'actioned', 'duplicate', 'not applicable', 'mitigated']
 export const defaultGridEditRoles: Role[] = ['super_admin', 'program_manager', 'ctm']
@@ -61,6 +62,13 @@ export function filterForView(items: GovernanceItem[], user: UserProfile, viewMo
 }
 
 export function priorityRank(value?: string) {
+  const matrixRank = riskLevelRank(value)
+  if (matrixRank >= 6) return 5
+  if (matrixRank >= 5) return 4
+  if (matrixRank >= 4) return 3
+  if (matrixRank >= 3) return 2
+  if (matrixRank >= 1) return 1
+
   const normalized = value?.toLowerCase() ?? ''
   if (normalized.includes('critical') || normalized.includes('red') || normalized.includes('very high')) return 4
   if (normalized.includes('high') || normalized.includes('amber')) return 3

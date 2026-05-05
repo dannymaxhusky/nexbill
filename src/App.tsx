@@ -39,6 +39,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import { moduleConfigByKey, moduleConfigs, phaseOptions, roleLabels, workstreamOptions } from './data/moduleConfig'
 import { demoItems, demoReports, demoUsers } from './data/demoData'
+import { riskImpactLabels, riskLevelDefinitions, riskLevelOptions, riskLevelTone, riskMatrixRows, riskProbabilityDefinitions } from './data/riskMatrix'
 import { calculateMetrics } from './lib/metrics'
 import { generateLocalReport, reportTypeLabel } from './lib/reporting'
 import {
@@ -1021,6 +1022,7 @@ function createDefaultTaxonomies(): TaxonomyEntry[] {
   pushValues('phase', phaseOptions)
   pushValues('priority', uniqueValues(moduleConfigs.flatMap((module) => module.priorityOptions ?? [])))
   pushValues('rag', ['1. Green', '2. Amber', '3. Red'])
+  pushValues('risk_level', riskLevelOptions)
 
   moduleConfigs.forEach((module) => {
     module.tableColumns.forEach((column, index) => {
@@ -1188,6 +1190,7 @@ function fieldOptions(field: ModuleConfig['fields'][number], taxonomies: Taxonom
   if (field.key === 'workstream') return activeTaxonomyValues(taxonomies, 'workstream', workstreamOptions)
   if (field.key === 'phase') return activeTaxonomyValues(taxonomies, 'phase', phaseOptions)
   if (field.key === 'priority') return activeTaxonomyValues(taxonomies, 'priority', field.options ?? [])
+  if (field.key === 'ragStatus' && field.options?.some((option) => Boolean(riskLevelTone(option)))) return activeTaxonomyValues(taxonomies, 'risk_level', field.options)
   if (field.key === 'ragStatus') return activeTaxonomyValues(taxonomies, 'rag', field.options ?? [])
   return field.options ?? []
 }
@@ -1789,6 +1792,8 @@ function ItemTable({
                           <StatusPill item={item} />
                         ) : column === 'itemCode' ? (
                           <span className="code">{item.itemCode}</span>
+                        ) : column === 'ragStatus' || column === 'priority' ? (
+                          <RiskLevelBadge value={readItemColumn(item, column)} />
                         ) : (
                           <span>{formatCellValue(readItemColumn(item, column))}</span>
                         )}
@@ -2283,8 +2288,16 @@ function columnLabel(column: string) {
 
 function StatusPill({ item }: { item: GovernanceItem }) {
   const closed = isClosedStatus(item.status, item.closedAt)
-  const tone = closed ? 'closed' : item.ragStatus?.includes('Red') ? 'red' : item.ragStatus?.includes('Amber') ? 'amber' : item.priority?.includes('High') ? 'amber' : 'green'
+  const riskTone = riskLevelTone(item.ragStatus ?? item.priority)
+  const tone = closed ? 'closed' : riskTone ?? 'green'
   return <span className={`status-pill tone-${tone}`}>{item.status}</span>
+}
+
+function RiskLevelBadge({ value }: { value: unknown }) {
+  const label = formatCellValue(value)
+  if (!label || label === 'Not set') return <span>{label}</span>
+  const tone = riskLevelTone(label)
+  return tone ? <span className={`risk-level-badge tone-${tone}`}>{label}</span> : <span>{label}</span>
 }
 
 function ItemDrawer({
@@ -3144,6 +3157,8 @@ function ProgramSitePage({
         </div>
       </section>
 
+      <RiskMatrixReference />
+
       {editingItem && (
         <ItemDrawer
           item={editingItem}
@@ -3169,6 +3184,72 @@ function ProgramSitePage({
         />
       )}
     </div>
+  )
+}
+
+function RiskMatrixReference() {
+  const probabilitiesByScore = new Map(riskProbabilityDefinitions.map((definition) => [definition.score, definition]))
+
+  return (
+    <section className="panel risk-matrix-reference">
+      <PanelHeader title="Reference Project Risk Matrix" icon={Gauge} />
+      <p className="risk-matrix-intro">
+        The following definitions help assess risk severity and guide mitigation decisions based on potential consequences. Source: Reference Project Risk Matrix.
+      </p>
+
+      <div className="risk-matrix-layout">
+        <div className="risk-matrix-table-wrap">
+          <table className="risk-matrix-table" aria-label="Project risk matrix">
+            <thead>
+              <tr>
+                <th>Probability</th>
+                {riskImpactLabels.map((label) => (
+                  <th key={label}>{label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {riskMatrixRows.map((row) => {
+                const probability = probabilitiesByScore.get(row.probability)
+                return (
+                  <tr key={row.probability}>
+                    <th>
+                      <strong>{row.probability}. {probability?.label}</strong>
+                    </th>
+                    {row.levels.map((level, index) => (
+                      <td key={`${row.probability}-${index}`} className={`risk-cell tone-${riskLevelTone(level) ?? 'medium'}`}>
+                        {level}
+                      </td>
+                    ))}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="risk-definition-panel">
+          <h3>Priority response standard</h3>
+          <div className="risk-definition-list">
+            {riskLevelDefinitions.map((definition) => (
+              <article key={definition.level}>
+                <span className={`risk-level-badge tone-${definition.tone}`}>{definition.rank}. {definition.level}</span>
+                <p>{definition.guidance}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="risk-probability-list">
+        {riskProbabilityDefinitions.map((definition) => (
+          <article key={definition.score}>
+            <strong>{definition.score}. {definition.label}</strong>
+            <span>{definition.definition}</span>
+          </article>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -3616,6 +3697,7 @@ function AdminPage({
     { key: 'phase', label: 'Phases' },
     { key: 'priority', label: 'Priorities' },
     { key: 'rag', label: 'RAG ratings' },
+    { key: 'risk_level', label: 'Risk matrix levels' },
   ]
   const [selectedGroup, setSelectedGroup] = useState(taxonomyGroups[0].key)
   const [selectedModule, setSelectedModule] = useState<ModuleKey>('actions')

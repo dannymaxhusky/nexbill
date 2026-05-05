@@ -1,4 +1,5 @@
 import type { ModuleConfig, ModuleKey } from '../types'
+import { riskLevelOptions } from './riskMatrix'
 
 const commonStatus = [
   'New',
@@ -87,12 +88,12 @@ export const moduleConfigs: ModuleConfig[] = [
     ownerFieldLabel: 'Risk Owner',
     defaultStatus: 'In Progress',
     statusOptions: commonStatus,
-    priorityOptions: ragOptions,
+    priorityOptions: riskLevelOptions,
     fields: [
       ...baseFields,
       { key: 'reportedLevel', label: 'Risk Reported Level', type: 'text' },
       { key: 'impactArea', label: 'Risk Impact Area', type: 'select', options: ['Budget / Finance', 'Schedule', 'Quality', 'Integration', 'Regulatory & Compliance', 'Data'] },
-      { key: 'ragStatus', label: 'Mitigated Risk Rating', type: 'select', options: ragOptions },
+      { key: 'ragStatus', label: 'Mitigated Risk Rating', type: 'select', options: riskLevelOptions },
       { key: 'responseStrategy', label: 'Risk Response Strategy', type: 'select', options: ['Avoid', 'Mitigate', 'Transfer', 'Accept'] },
       { key: 'summary', label: 'Brief Risk Description', type: 'textarea', required: true },
       { key: 'mitigation', label: 'Risk Mitigation', type: 'textarea' },
