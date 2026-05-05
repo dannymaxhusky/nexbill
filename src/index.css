@@ -1921,6 +1921,25 @@ tr.is-closed {
   font-size: 15px;
 }
 
+.confidence-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  line-height: 1.45;
+  margin-top: 14px;
+  padding: 10px;
+}
+
+.confidence-note svg {
+  color: var(--deep-purple);
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
 .citation-list {
   display: grid;
   gap: 10px;

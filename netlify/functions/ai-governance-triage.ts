@@ -49,6 +49,12 @@ interface TriageOutput {
   createdAt: string
 }
 
+interface OpenAiConfig {
+  apiKey: string
+  model: string
+  baseUrl: string
+}
+
 const triageRoles = new Set(['super_admin', 'program_manager', 'ctm'])
 
 export const handler: Handler = async (event) => {
@@ -89,8 +95,9 @@ export const handler: Handler = async (event) => {
     const items = (payload.items ?? []).map(normalizeItem).filter(Boolean).slice(0, 100) as GovernanceItemPayload[]
     if (!items.length) return json({ error: 'No records were supplied for AI governance triage.' }, 400)
 
-    const output = process.env.OPENAI_API_KEY && process.env.OPENAI_MODEL
-      ? await generateOpenAiTriage(payload.scope ?? 'current_register_view', payload.filters ?? {}, items)
+    const openAiConfig = readOpenAiConfig()
+    const output = openAiConfig
+      ? await generateOpenAiTriage(payload.scope ?? 'current_register_view', payload.filters ?? {}, items, openAiConfig)
       : generateDeterministicTriage(items)
 
     return json(output)
@@ -99,7 +106,7 @@ export const handler: Handler = async (event) => {
   }
 }
 
-async function generateOpenAiTriage(scope: string, filters: Record<string, unknown>, items: GovernanceItemPayload[]): Promise<TriageOutput> {
+async function generateOpenAiTriage(scope: string, filters: Record<string, unknown>, items: GovernanceItemPayload[], config: OpenAiConfig): Promise<TriageOutput> {
   const prompt = [
     'You are the NexBill governance quality triage assistant.',
     'Inspect the supplied governance register records and return strict JSON only.',
@@ -111,63 +118,82 @@ async function generateOpenAiTriage(scope: string, filters: Record<string, unkno
     'Return JSON with summary, findings[], recommendedFixes[], confidenceNotes, createdAt.',
   ].join('\n')
 
-  const response = await fetch('https://api.openai.com/v1/responses', {
+  const output = await requestStructuredJson(config, prompt, 'nexbill_governance_triage', {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      summary: { type: 'string' },
+      findings: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
+            category: { type: 'string' },
+            itemCode: { type: 'string' },
+            finding: { type: 'string' },
+            whyItMatters: { type: 'string' },
+            suggestedFix: { type: 'string' },
+            sourceRef: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                workbook: { type: 'string' },
+                sheet: { type: 'string' },
+                row: { type: 'number' },
+                sourceId: { type: 'string' },
+                note: { type: 'string' },
+              },
+            },
+          },
+          required: ['severity', 'category', 'itemCode', 'finding', 'whyItMatters', 'suggestedFix', 'sourceRef'],
+        },
+      },
+      recommendedFixes: { type: 'array', items: { type: 'string' } },
+      confidenceNotes: { type: 'string' },
+      createdAt: { type: 'string' },
+    },
+    required: ['summary', 'findings', 'recommendedFixes', 'confidenceNotes', 'createdAt'],
+  }) as Partial<TriageOutput>
+
+  return cleanTriageOutput({
+    ...output,
+    confidenceNotes: normalizeText(output.confidenceNotes) || `Generated through ${describeBaseUrl(config.baseUrl)}.`,
+    createdAt: normalizeText(output.createdAt) || new Date().toISOString(),
+  }, items)
+}
+
+async function requestStructuredJson(config: OpenAiConfig, prompt: string, schemaName: string, schema: Record<string, unknown>) {
+  try {
+    return await requestResponsesJson(config, prompt, schemaName, schema)
+  } catch (error) {
+    if (!shouldTryChatCompletions(error)) throw error
+    return requestChatCompletionsJson(config, prompt, schemaName, schema)
+  }
+}
+
+async function requestResponsesJson(config: OpenAiConfig, prompt: string, schemaName: string, schema: Record<string, unknown>) {
+  const response = await fetch(resolveEndpoint(config.baseUrl, 'responses'), {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      Authorization: `Bearer ${config.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL,
+      model: config.model,
       input: prompt,
       text: {
         format: {
           type: 'json_schema',
-          name: 'nexbill_governance_triage',
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              summary: { type: 'string' },
-              findings: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  additionalProperties: false,
-                  properties: {
-                    severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
-                    category: { type: 'string' },
-                    itemCode: { type: 'string' },
-                    finding: { type: 'string' },
-                    whyItMatters: { type: 'string' },
-                    suggestedFix: { type: 'string' },
-                    sourceRef: {
-                      type: 'object',
-                      additionalProperties: false,
-                      properties: {
-                        workbook: { type: 'string' },
-                        sheet: { type: 'string' },
-                        row: { type: 'number' },
-                        sourceId: { type: 'string' },
-                        note: { type: 'string' },
-                      },
-                    },
-                  },
-                  required: ['severity', 'category', 'itemCode', 'finding', 'whyItMatters', 'suggestedFix', 'sourceRef'],
-                },
-              },
-              recommendedFixes: { type: 'array', items: { type: 'string' } },
-              confidenceNotes: { type: 'string' },
-              createdAt: { type: 'string' },
-            },
-            required: ['summary', 'findings', 'recommendedFixes', 'confidenceNotes', 'createdAt'],
-          },
+          name: schemaName,
+          schema,
         },
       },
     }),
   })
 
-  if (!response.ok) throw new Error(`OpenAI request failed: ${response.status}`)
+  if (!response.ok) throw createOpenAiError('responses', response.status, await safeResponseText(response))
 
   const data = (await response.json()) as {
     output_text?: string
@@ -175,7 +201,41 @@ async function generateOpenAiTriage(scope: string, filters: Record<string, unkno
   }
   const outputText = data.output_text ?? data.output?.[0]?.content?.[0]?.text
   if (!outputText) throw new Error('OpenAI response did not include output text')
-  return cleanTriageOutput(JSON.parse(outputText) as Partial<TriageOutput>, items)
+  return JSON.parse(outputText)
+}
+
+async function requestChatCompletionsJson(config: OpenAiConfig, prompt: string, schemaName: string, schema: Record<string, unknown>) {
+  const response = await fetch(resolveEndpoint(config.baseUrl, 'chat/completions'), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages: [
+        { role: 'system', content: 'Return only valid JSON matching the requested schema.' },
+        { role: 'user', content: prompt },
+      ],
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: schemaName,
+          schema,
+          strict: true,
+        },
+      },
+    }),
+  })
+
+  if (!response.ok) throw createOpenAiError('chat/completions', response.status, await safeResponseText(response))
+
+  const data = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>
+  }
+  const outputText = data.choices?.[0]?.message?.content
+  if (!outputText) throw new Error('OpenAI chat response did not include message content')
+  return JSON.parse(outputText)
 }
 
 function generateDeterministicTriage(items: GovernanceItemPayload[]): TriageOutput {
@@ -228,6 +288,46 @@ function generateDeterministicTriage(items: GovernanceItemPayload[]): TriageOutp
       ? 'Deterministic fallback was used after AI output validation.'
       : 'Generated without external AI because OPENAI_API_KEY or OPENAI_MODEL is not configured.',
     createdAt: new Date().toISOString(),
+  }
+}
+
+function readOpenAiConfig(): OpenAiConfig | null {
+  const apiKey = process.env.OPENAI_API_KEY?.trim()
+  const model = process.env.OPENAI_MODEL?.trim()
+  if (!apiKey || !model) return null
+  return {
+    apiKey,
+    model,
+    baseUrl: normalizeBaseUrl(process.env.OPENAI_BASE_URL),
+  }
+}
+
+function normalizeBaseUrl(value?: string) {
+  return (value?.trim() || 'https://api.openai.com/v1').replace(/\/+$/, '')
+}
+
+function resolveEndpoint(baseUrl: string, path: 'responses' | 'chat/completions') {
+  if (baseUrl.endsWith('/responses') || baseUrl.endsWith('/chat/completions')) return baseUrl
+  return `${baseUrl}/${path}`
+}
+
+function shouldTryChatCompletions(error: unknown) {
+  return error instanceof Error && /OpenAI responses request failed: (400|404|405|501)/.test(error.message)
+}
+
+function createOpenAiError(api: string, status: number, detail: string) {
+  return new Error(`OpenAI ${api} request failed: ${status}${detail ? ` ${detail.slice(0, 220)}` : ''}`)
+}
+
+async function safeResponseText(response: Response) {
+  return response.text().catch(() => '')
+}
+
+function describeBaseUrl(baseUrl: string) {
+  try {
+    return new URL(baseUrl).host
+  } catch {
+    return 'configured OpenAI-compatible endpoint'
   }
 }
 

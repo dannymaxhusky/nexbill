@@ -186,6 +186,7 @@ export interface ReportDraft {
     source?: SourceRef
   }>
   createdAt: string
+  confidenceNotes?: string
 }
 
 export interface ReportSnapshot {

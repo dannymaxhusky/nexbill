@@ -2256,6 +2256,11 @@ function formatSourceRef(sourceRef?: AiTriageOutput['findings'][number]['sourceR
   return parts.length ? parts.join(' · ') : 'No source reference'
 }
 
+function isExternalAiDraft(draft: ReportDraft) {
+  const confidenceNotes = draft.confidenceNotes?.toLowerCase() ?? ''
+  return draft.id.startsWith('ai-') && !confidenceNotes.includes('without external ai') && !confidenceNotes.includes('deterministic fallback')
+}
+
 function writeItemColumn(item: GovernanceItem, column: string, value: string): GovernanceItem {
   if (column in item) {
     return { ...item, [column]: value }
@@ -2668,6 +2673,7 @@ function ReportingPage({ items, user }: { items: GovernanceItem[]; user: UserPro
       })
       if (!response.ok) throw new Error('AI function unavailable')
       const data = (await response.json()) as ReportDraft
+      const usedExternalAi = isExternalAiDraft(data)
       setDraft(data)
       if (isSupabaseConfigured) {
         try {
@@ -2677,15 +2683,17 @@ function ReportingPage({ items, user }: { items: GovernanceItem[]; user: UserPro
             sourceRecordCount: items.length,
           })
           setAiDrafts((current) => [savedDraft, ...current])
-          setReportMessage('AI draft generated and saved to draft history.')
+          setReportMessage(usedExternalAi ? 'AI draft generated and saved to draft history.' : 'Deterministic draft generated and saved because AI environment was not available to the function.')
           await logAuditEvent({
-            eventType: 'ai_report_draft_generated',
+            eventType: usedExternalAi ? 'ai_report_draft_generated' : 'deterministic_report_draft_generated',
             tableName: 'ai_report_drafts',
             recordId: savedDraft.id,
             metadata: {
               reportType,
               title: data.title,
               sourceRecordCount: items.length,
+              usedExternalAi,
+              confidenceNotes: data.confidenceNotes,
             },
           })
         } catch (saveError) {
@@ -2693,7 +2701,7 @@ function ReportingPage({ items, user }: { items: GovernanceItem[]; user: UserPro
           setReportError(`Draft generated, but history save failed: ${readErrorMessage(saveError, 'Unable to save AI draft.')}`)
         }
       } else {
-        setReportMessage('Draft generated in demo mode.')
+        setReportMessage(usedExternalAi ? 'AI draft generated in demo mode.' : 'Deterministic draft generated in demo mode.')
       }
     } catch (error) {
       console.error(error)
@@ -2786,6 +2794,12 @@ function ReportingPage({ items, user }: { items: GovernanceItem[]; user: UserPro
           <ReportBlock title="Risks and Issues" items={draft.risks} onChange={(risks) => setDraft((current) => ({ ...current, risks }))} />
           <ReportBlock title="Decisions" items={draft.decisions} onChange={(decisions) => setDraft((current) => ({ ...current, decisions }))} />
           <ReportBlock title="Next Steps" items={draft.nextSteps} onChange={(nextSteps) => setDraft((current) => ({ ...current, nextSteps }))} />
+          {draft.confidenceNotes && (
+            <div className="confidence-note">
+              <Bot size={16} />
+              <span>{draft.confidenceNotes}</span>
+            </div>
+          )}
         </article>
 
         <aside className="panel citation-panel">
