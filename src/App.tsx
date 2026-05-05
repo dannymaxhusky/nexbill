@@ -240,6 +240,7 @@ function App() {
     const {
       data: { subscription },
     } = client.auth.onAuthStateChange((event, session) => {
+      if (event === 'INITIAL_SESSION') return
       if (event === 'PASSWORD_RECOVERY') setPasswordPanelOpen(true)
       if (!session) {
         setAuthStatus('signed_out')

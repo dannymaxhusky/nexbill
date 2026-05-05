@@ -482,12 +482,12 @@ async function fetchGovernanceItemDetailMap(items: GovernanceItem[]) {
   if (!supabase || items.length === 0) return detailMap
 
   const modules = [...new Set(items.map((item) => item.module))]
-  for (const module of modules) {
+  await Promise.all(modules.map(async (module) => {
     const config = detailConfigForModule(module)
-    if (!config) continue
+    if (!config) return
 
     const itemIds = items.filter((item) => item.module === module).map((item) => item.id)
-    if (!itemIds.length) continue
+    if (!itemIds.length) return
 
     const { data, error } = await supabase
       .from(config.table)
@@ -501,7 +501,7 @@ async function fetchGovernanceItemDetailMap(items: GovernanceItem[]) {
       if (!itemId) continue
       detailMap.set(itemId, detailsFromDetailRow(module, detailRow) as GovernanceItem['details'])
     }
-  }
+  }))
 
   return detailMap
 }
