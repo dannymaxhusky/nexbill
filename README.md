@@ -8,6 +8,7 @@ Online governance workspace for the NexBill program, designed for Netlify deploy
 - Supabase schema and RLS migration in `supabase/migrations/202605030001_initial_schema.sql`.
 - Netlify Functions:
   - `ai-report-draft`
+  - `ai-governance-triage`
   - `workbook-import-preview`
   - `workbook-import-commit`
 - Full first-release module coverage:
@@ -37,7 +38,7 @@ Use `.env.example` as the starting point. `VITE_SUPABASE_ANON_KEY` is also suppo
 ## Supabase Setup
 
 1. Create a Supabase project.
-2. Run `supabase/migrations/202605030001_initial_schema.sql` in the SQL editor.
+2. Run `supabase/migrations/202605030001_initial_schema.sql` in the SQL editor, then run later migration files such as `supabase/migrations/202605040001_ai_triage_runs.sql`.
 3. Create users in Supabase Auth.
 4. Insert matching rows into `profiles` and `user_roles`.
 5. In Supabase Auth URL configuration, set the production Site URL to the Netlify URL, for example `https://nexbill-pm.netlify.app`, and add redirect URLs for production and local development:
@@ -49,7 +50,7 @@ Use `.env.example` as the starting point. `VITE_SUPABASE_ANON_KEY` is also suppo
    - `VITE_SUPABASE_PUBLISHABLE_KEY`
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_ROLE_KEY`
-   - `OPENAI_API_KEY` and `OPENAI_MODEL` if AI draft generation should call OpenAI.
+   - `OPENAI_API_KEY` and `OPENAI_MODEL` if AI report drafts and governance triage should call OpenAI.
 
 This is a Vite + React app, not a Next.js app, so it does not use `@supabase/ssr`, `page.tsx`, or Next middleware. Session persistence is handled by `@supabase/supabase-js` in the browser, and privileged server writes run through Netlify Functions.
 

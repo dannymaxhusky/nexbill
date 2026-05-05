@@ -33,6 +33,40 @@ export interface UserProfile {
   fullName: string
   role: Role
   workstream?: string
+  department?: string
+  avatarUrl?: string
+}
+
+export interface RoleAssignment {
+  id: string
+  userId: string
+  role: Role
+  workstream?: string
+  createdAt?: string
+}
+
+export interface ManagedProfile {
+  id: string
+  email: string
+  fullName: string
+  department?: string
+  workstream?: string
+  roles: RoleAssignment[]
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ProgramSitePageRecord {
+  id: string
+  title: string
+  audience: string
+  contentType: string
+  body?: string
+  sourceUrl?: string
+  ownerId?: string
+  status: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface SourceRef {
@@ -65,6 +99,53 @@ export interface GovernanceItem {
   sourceRef?: SourceRef
   details: Record<string, string | number | boolean | null | undefined>
 }
+
+export interface CommentUpdate {
+  id: string
+  itemId: string
+  authorId?: string
+  authorName?: string
+  authorEmail?: string
+  body: string
+  updateType: string
+  createdAt: string
+}
+
+export interface AuditEvent {
+  id: string
+  actorId?: string
+  actorName?: string
+  actorEmail?: string
+  eventType: string
+  tableName: string
+  recordId?: string
+  metadata: Record<string, unknown>
+  createdAt: string
+}
+
+export interface AttachmentRecord {
+  id: string
+  itemId?: string
+  fileName: string
+  storagePath: string
+  contentType?: string
+  uploadedBy?: string
+  uploadedByName?: string
+  uploadedByEmail?: string
+  createdAt: string
+}
+
+export interface TaxonomyEntry {
+  id: string
+  groupKey: string
+  value: string
+  label?: string
+  sortOrder: number
+  active: boolean
+  createdAt: string
+}
+
+export type ColumnSettings = Partial<Record<ModuleKey, string[]>>
 
 export interface ModuleField {
   key: string
@@ -104,6 +185,58 @@ export interface ReportDraft {
     title: string
     source?: SourceRef
   }>
+  createdAt: string
+}
+
+export interface ReportSnapshot {
+  id: string
+  reportType: ReportType
+  title: string
+  body: ReportDraft
+  sourceFilters: Record<string, unknown>
+  approvedBy?: string
+  createdBy?: string
+  createdAt: string
+}
+
+export interface AiReportDraftRecord {
+  id: string
+  reportType: ReportType
+  prompt: Record<string, unknown>
+  output: ReportDraft
+  sourceItemIds: string[]
+  confidenceNotes?: string
+  createdBy?: string
+  createdAt: string
+}
+
+export type AiTriageSeverity = 'critical' | 'high' | 'medium' | 'low'
+
+export interface AiTriageFinding {
+  severity: AiTriageSeverity
+  category: string
+  itemCode: string
+  finding: string
+  whyItMatters: string
+  suggestedFix: string
+  sourceRef?: SourceRef
+}
+
+export interface AiTriageOutput {
+  summary: string
+  findings: AiTriageFinding[]
+  recommendedFixes: string[]
+  confidenceNotes: string
+  createdAt: string
+}
+
+export interface AiTriageRun {
+  id: string
+  scope: string
+  filters: Record<string, unknown>
+  inputItemIds: string[]
+  output: AiTriageOutput
+  createdBy?: string
   createdAt: string
 }
 

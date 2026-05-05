@@ -1,6 +1,7 @@
-import type { GovernanceItem, UserProfile, ViewMode } from '../types'
+import type { GovernanceItem, Role, UserProfile, ViewMode } from '../types'
 
 export const closedStatusTerms = ['closed', 'completed', 'actioned', 'duplicate', 'not applicable', 'mitigated']
+export const defaultGridEditRoles: Role[] = ['super_admin', 'program_manager', 'ctm']
 
 export function isClosedStatus(status?: string, closedAt?: string) {
   if (closedAt) return true
@@ -16,8 +17,12 @@ export function isPrivilegedRole(role: UserProfile['role']) {
   return role === 'super_admin' || role === 'program_manager' || role === 'ctm'
 }
 
-export function canGridEdit(user: UserProfile) {
-  return user.role === 'super_admin' || user.role === 'program_manager' || user.role === 'ctm'
+export function canGridEdit(user: UserProfile, allowedRoles: Role[] = defaultGridEditRoles) {
+  return allowedRoles.includes(user.role)
+}
+
+export function canDeleteItem(user: UserProfile) {
+  return user.role === 'super_admin'
 }
 
 export function canEditItem(user: UserProfile, item: GovernanceItem) {
@@ -33,12 +38,16 @@ export function matchesMyView(item: GovernanceItem, user: UserProfile) {
   }
   const email = user.email.toLowerCase()
   const name = user.fullName.toLowerCase()
+  const approverEmail = String(item.details.approverEmail ?? item.details.approver_email ?? '').toLowerCase()
+  const approverName = String(item.details.approverName ?? item.details.approver ?? '').toLowerCase()
   return (
     isOpenStatus(item.status, item.closedAt) &&
     (item.ownerEmail?.toLowerCase() === email ||
       item.supportEmail?.toLowerCase() === email ||
       item.ownerName?.toLowerCase() === name ||
       item.supportName?.toLowerCase() === name ||
+      approverEmail === email ||
+      approverName === name ||
       item.workstream === user.workstream)
   )
 }

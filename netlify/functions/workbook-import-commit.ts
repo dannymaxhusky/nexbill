@@ -1,5 +1,8 @@
 import type { Handler } from '@netlify/functions'
 import { createClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { detailConfigForModule, detailPayloadFromDetails } from '../../src/lib/detailTables'
+import type { ModuleKey } from '../../src/types'
 
 interface GovernanceImportRecord {
   module: string
@@ -92,12 +95,7 @@ export const handler: Handler = async (event) => {
     }
 
     const itemCodes = importRecords.map((record) => record.itemCode)
-    const { data: existingRows, error: existingError } = await supabase
-      .from('governance_items')
-      .select('item_code')
-      .in('item_code', itemCodes)
-    if (existingError) throw existingError
-    const existingCodes = new Set((existingRows ?? []).map((row) => row.item_code))
+    const existingCodes = await fetchExistingItemCodes(supabase, itemCodes)
 
     const rows = importRecords.map((record) => ({
       module: record.module,
@@ -124,15 +122,127 @@ export const handler: Handler = async (event) => {
     }))
 
     for (const [index, batch] of chunk(rows, 100).entries()) {
-      const { error } = await supabase.from('governance_items').upsert(batch, { onConflict: 'item_code' })
+      const { error } = await supabase
+        .from('governance_items')
+        .upsert(batch, { onConflict: 'item_code' })
       if (error) throw new Error(`Import batch ${index + 1} failed: ${error.message}`)
     }
 
+    const savedRows = await fetchSavedItemRows(supabase, itemCodes)
+    await upsertDetailRows(supabase, importRecords, savedRows)
+
     const updated = importRecords.filter((record) => existingCodes.has(record.itemCode)).length
-    return json({ inserted: rows.length - updated, updated, skipped })
+    const verifiedCodes = await fetchExistingItemCodes(supabase, itemCodes)
+    const missingItemCodes = itemCodes.filter((code) => !verifiedCodes.has(code))
+    const { count, error: countError } = await supabase
+      .from('governance_items')
+      .select('id', { count: 'exact', head: true })
+    if (countError) throw countError
+    const auditError = await writeAuditEvent(supabase, user.id, {
+      eventType: 'workbook_import_committed',
+      tableName: 'governance_items',
+      metadata: {
+        inserted: rows.length - updated,
+        updated,
+        skipped,
+        requested: importRecords.length,
+        verified: verifiedCodes.size,
+        missingItemCodes: missingItemCodes.slice(0, 20),
+        totalItems: count ?? null,
+      },
+    })
+    if (auditError) console.warn(auditError)
+
+    return json({
+      inserted: rows.length - updated,
+      updated,
+      skipped,
+      requested: importRecords.length,
+      verified: verifiedCodes.size,
+      missingItemCodes: missingItemCodes.slice(0, 20),
+      totalItems: count ?? null,
+      message: missingItemCodes.length
+        ? `${missingItemCodes.length} requested records were not visible after commit verification.`
+        : `Verified ${verifiedCodes.size} committed records in Supabase.`,
+    })
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : 'Commit failed' }, 500)
   }
+}
+
+async function fetchExistingItemCodes(supabase: SupabaseClient, itemCodes: string[]) {
+  const existingCodes = new Set<string>()
+
+  for (const codes of chunk(itemCodes, 100)) {
+    const { data, error } = await supabase
+      .from('governance_items')
+      .select('item_code')
+      .in('item_code', codes)
+    if (error) throw error
+    for (const row of data ?? []) existingCodes.add(String(row.item_code))
+  }
+
+  return existingCodes
+}
+
+async function fetchSavedItemRows(supabase: SupabaseClient, itemCodes: string[]) {
+  const rows = new Map<string, { id: string; item_code: string; module: ModuleKey }>()
+
+  for (const codes of chunk(itemCodes, 100)) {
+    const { data, error } = await supabase
+      .from('governance_items')
+      .select('id,item_code,module')
+      .in('item_code', codes)
+    if (error) throw error
+    for (const row of data ?? []) {
+      rows.set(String(row.item_code), {
+        id: String(row.id),
+        item_code: String(row.item_code),
+        module: String(row.module) as ModuleKey,
+      })
+    }
+  }
+
+  return rows
+}
+
+async function upsertDetailRows(
+  supabase: SupabaseClient,
+  records: GovernanceImportRecord[],
+  savedRows: Map<string, { id: string; module: ModuleKey }>,
+) {
+  const rowsByTable = new Map<string, Record<string, unknown>[]>()
+
+  records.forEach((record) => {
+    const savedRow = savedRows.get(record.itemCode)
+    if (!savedRow) return
+    const config = detailConfigForModule(savedRow.module)
+    const payload = detailPayloadFromDetails(savedRow.id, savedRow.module, record.details ?? {})
+    if (!config || !payload) return
+    rowsByTable.set(config.table, [...(rowsByTable.get(config.table) ?? []), payload])
+  })
+
+  for (const [table, tableRows] of rowsByTable) {
+    for (const [index, batch] of chunk(tableRows, 100).entries()) {
+      const { error } = await supabase.from(table).upsert(batch, { onConflict: 'item_id' })
+      if (error) throw new Error(`Detail import ${table} batch ${index + 1} failed: ${error.message}`)
+    }
+  }
+}
+
+async function writeAuditEvent(
+  supabase: SupabaseClient,
+  actorId: string,
+  event: { eventType: string; tableName: string; recordId?: string; metadata?: Record<string, unknown> },
+) {
+  const { error } = await supabase.from('audit_events').insert({
+    actor_id: actorId,
+    event_type: event.eventType,
+    table_name: event.tableName,
+    record_id: event.recordId ?? null,
+    metadata: event.metadata ?? {},
+  })
+  return error
 }
 
 function normalizeImportRecords(records: GovernanceImportRecord[]) {
