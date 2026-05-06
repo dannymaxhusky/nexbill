@@ -345,10 +345,26 @@ export async function fetchProfile(): Promise<UserProfile | null> {
   } = await supabase.auth.getUser()
   if (!user) return null
 
-  const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()
+  const metadata = user.user_metadata as Record<string, unknown>
+  let { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()
+  if (!profile && user.email?.toLowerCase().endsWith('@lenovo.com')) {
+    const fullName = readOptionalString(metadata.full_name) ?? user.email.split('@')[0] ?? 'NexBill User'
+    const { data: insertedProfile, error: insertError } = await supabase
+      .from('profiles')
+      .insert({
+        id: user.id,
+        email: user.email,
+        full_name: fullName,
+        department: readOptionalString(metadata.department) ?? null,
+        default_workstream: readOptionalString(metadata.default_workstream) ?? null,
+      })
+      .select('*')
+      .maybeSingle()
+    if (!insertError) profile = insertedProfile
+  }
+
   const { data: roles } = await supabase.from('user_roles').select('role').eq('user_id', user.id)
   const role = roles?.[0]?.role ?? 'owner'
-  const metadata = user.user_metadata as Record<string, unknown>
   const avatarUrl = readOptionalString(profile?.avatar_url) ?? readOptionalString(metadata.avatar_url)
   const department = readOptionalString(profile?.department) ?? readOptionalString(metadata.department)
 

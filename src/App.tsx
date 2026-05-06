@@ -172,6 +172,8 @@ function App() {
   const [dataError, setDataError] = useState('')
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
+  const [signupPrefix, setSignupPrefix] = useState('')
+  const [signupFullName, setSignupFullName] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [passwordMessage, setPasswordMessage] = useState('')
   const [passwordPanelOpen, setPasswordPanelOpen] = useState(() => hasPasswordSetupHash())
@@ -425,6 +427,52 @@ function App() {
     }
   }
 
+  async function handleAccessRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase) return
+
+    const prefix = normalizeLenovoEmailPrefix(signupPrefix)
+    const fullName = signupFullName.trim()
+    if (signupPrefix.includes('@') && !signupPrefix.trim().toLowerCase().endsWith('@lenovo.com')) {
+      setAuthNotice('Registration is limited to @lenovo.com email addresses.')
+      return
+    }
+    if (!prefix) {
+      setAuthNotice('Enter your Lenovo email prefix.')
+      return
+    }
+    if (!fullName) {
+      setAuthNotice('Enter your full name.')
+      return
+    }
+
+    const email = `${prefix}@lenovo.com`
+    setAuthNotice('')
+    setLoadingMessage('Sending access request link')
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: window.location.origin,
+          shouldCreateUser: true,
+          data: {
+            full_name: fullName,
+            access_request_source: 'nexbill_governance_platform',
+          },
+        },
+      })
+      if (error) throw error
+      setAuthEmail(email)
+      setSignupPrefix(prefix)
+      setAuthNotice(`Access link sent to ${email}. Open the email to finish registration.`)
+    } catch (error) {
+      console.error(error)
+      setAuthNotice(readErrorMessage(error, 'Access request could not be submitted.'))
+    } finally {
+      setLoadingMessage('')
+    }
+  }
+
   async function handlePasswordReset() {
     if (!supabase) return
     if (!authEmail.trim()) {
@@ -499,6 +547,11 @@ function App() {
         onSignIn={handleSignIn}
         onMagicLink={handleMagicLink}
         onPasswordReset={handlePasswordReset}
+        signupPrefix={signupPrefix}
+        signupFullName={signupFullName}
+        setSignupPrefix={setSignupPrefix}
+        setSignupFullName={setSignupFullName}
+        onAccessRequest={handleAccessRequest}
       />
     )
   }
@@ -706,24 +759,35 @@ function LoginPage({
   authNotice,
   authStatus,
   loadingMessage,
+  signupPrefix,
+  signupFullName,
   setAuthEmail,
   setAuthPassword,
+  setSignupPrefix,
+  setSignupFullName,
   onSignIn,
   onMagicLink,
   onPasswordReset,
+  onAccessRequest,
 }: {
   authEmail: string
   authPassword: string
   authNotice: string
   authStatus: AuthStatus
   loadingMessage: string
+  signupPrefix: string
+  signupFullName: string
   setAuthEmail: (value: string) => void
   setAuthPassword: (value: string) => void
+  setSignupPrefix: (value: string) => void
+  setSignupFullName: (value: string) => void
   onSignIn: (event: FormEvent<HTMLFormElement>) => void
   onMagicLink: () => void
   onPasswordReset: () => void
+  onAccessRequest: (event: FormEvent<HTMLFormElement>) => void
 }) {
   const busy = authStatus === 'checking' || Boolean(loadingMessage)
+  const normalizedSignupPrefix = normalizeLenovoEmailPrefix(signupPrefix)
 
   return (
     <main className="login-screen">
@@ -759,9 +823,49 @@ function LoginPage({
             <div className="auth-message">{loadingMessage || authNotice}</div>
           )}
         </form>
+
+        <form className="access-request-form" onSubmit={onAccessRequest}>
+          <div>
+            <span className="code">Lenovo access request</span>
+            <h2>Request access</h2>
+            <p>Use your Lenovo email. The domain is locked to keep NexBill access inside Lenovo.</p>
+          </div>
+          <label>
+            Full name
+            <input
+              value={signupFullName}
+              onChange={(event) => setSignupFullName(event.target.value)}
+              autoComplete="name"
+              placeholder="Your name"
+            />
+          </label>
+          <label>
+            Lenovo email
+            <div className="email-prefix-control">
+              <input
+                value={signupPrefix}
+                onChange={(event) => setSignupPrefix(event.target.value)}
+                autoComplete="username"
+                placeholder="firstname.lastname"
+              />
+              <span>@lenovo.com</span>
+            </div>
+          </label>
+          <button className="button secondary" disabled={busy || !normalizedSignupPrefix || !signupFullName.trim()} type="submit">
+            Request magic link
+          </button>
+        </form>
       </section>
     </main>
   )
+}
+
+function normalizeLenovoEmailPrefix(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/@lenovo\.com$/i, '')
+    .replace(/[^a-z0-9._+-]/g, '')
 }
 
 function ProfileAvatar({ user }: { user: UserProfile }) {

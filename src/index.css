@@ -116,6 +116,7 @@ button:disabled {
     linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px),
     linear-gradient(135deg, var(--deep-red), var(--deep-purple) 58%, var(--deep-blue));
   background-size: 64px 64px, 64px 64px, auto;
+  grid-row: 1 / span 2;
 }
 
 .login-brand .brand-mark {
@@ -143,10 +144,11 @@ button:disabled {
   display: grid;
   align-content: center;
   gap: 14px;
-  padding: 34px;
+  padding: 34px 34px 18px;
 }
 
-.login-form label {
+.login-form label,
+.access-request-form label {
   display: grid;
   gap: 6px;
   color: var(--muted);
@@ -154,13 +156,64 @@ button:disabled {
   font-weight: 700;
 }
 
-.login-form input {
+.login-form input,
+.access-request-form input {
   border: 1px solid var(--line);
   border-radius: 4px;
   background: #fff;
   color: var(--ink);
   padding: 12px;
   outline: 0;
+}
+
+.access-request-form {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  margin: 0 34px 34px;
+  padding-top: 18px;
+}
+
+.access-request-form h2,
+.access-request-form p {
+  margin: 0;
+}
+
+.access-request-form h2 {
+  font-size: 20px;
+  letter-spacing: 0;
+  margin-top: 4px;
+}
+
+.access-request-form p {
+  color: var(--muted);
+  line-height: 1.45;
+  margin-top: 6px;
+}
+
+.email-prefix-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.email-prefix-control input {
+  border: 0;
+  min-width: 0;
+}
+
+.email-prefix-control span {
+  border-left: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--deep-purple);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 12px;
+  white-space: nowrap;
 }
 
 .auth-options {
@@ -2656,10 +2709,15 @@ tr.is-closed {
   .login-brand {
     min-height: auto;
     padding: 24px;
+    grid-row: auto;
   }
 
   .login-form {
-    padding: 24px;
+    padding: 24px 24px 12px;
+  }
+
+  .access-request-form {
+    margin: 0 24px 24px;
   }
 
   .workspace {
