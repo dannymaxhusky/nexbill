@@ -35,7 +35,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import { moduleConfigByKey, moduleConfigs, phaseOptions, roleLabels, workstreamOptions } from './data/moduleConfig'
 import { demoItems, demoReports, demoUsers } from './data/demoData'
@@ -59,6 +59,7 @@ import {
   fetchTaxonomies,
   isSupabaseConfigured,
   logAuditEvent,
+  mergeGovernanceItemDetails,
   replaceUserPrimaryRole,
   saveAiReportDraft,
   saveAiTriageRun,
@@ -153,7 +154,22 @@ const defaultRolePermissions: Record<Role, RolePermissionKey[]> = {
   executive: ['view_all', 'reporting', 'audit_log'],
 }
 
+async function timeWorkspaceStep<T>(label: string, step: () => Promise<T>) {
+  const startedAt = performance.now()
+  try {
+    return await step()
+  } finally {
+    logWorkspaceTiming(label, startedAt)
+  }
+}
+
+function logWorkspaceTiming(label: string, startedAt: number) {
+  if (!import.meta.env.DEV) return
+  console.info(`[NexBill perf] ${label}: ${Math.round(performance.now() - startedAt)}ms`)
+}
+
 function App() {
+  const workspaceLoadSequence = useRef(0)
   const [page, setPage] = useState<PageKey>('dashboard')
   const [items, setItems] = useState<GovernanceItem[]>(() => (isSupabaseConfigured ? [] : demoItems))
   const [user, setUser] = useState<UserProfile>(demoUsers[0])
@@ -178,20 +194,44 @@ function App() {
   const [passwordMessage, setPasswordMessage] = useState('')
   const [passwordPanelOpen, setPasswordPanelOpen] = useState(() => hasPasswordSetupHash())
 
+  const hydrateGovernanceItemDetails = useCallback(async (baseItems: GovernanceItem[], loadSequence: number) => {
+    if (!baseItems.length) return
+
+    try {
+      const detailedItems = await timeWorkspaceStep('detail tables', () => mergeGovernanceItemDetails(baseItems))
+      if (workspaceLoadSequence.current !== loadSequence) return
+
+      const detailsById = new Map(detailedItems.map((item) => [item.id, item.details]))
+      setItems((current) => current.map((item) => ({
+        ...item,
+        details: {
+          ...item.details,
+          ...(detailsById.get(item.id) ?? {}),
+        },
+      })))
+    } catch (error) {
+      console.error(error)
+      setDataError(readErrorMessage(error, 'Register details could not be fully loaded.'))
+    }
+  }, [])
+
   const loadAuthenticatedWorkspace = useCallback(async (options: { successMessage?: string; silent?: boolean; throwOnError?: boolean } = {}) => {
     if (!supabase) return []
 
-    if (!options.silent) setLoadingMessage('Loading NexBill data')
+    const loadSequence = ++workspaceLoadSequence.current
+    const workspaceStartedAt = performance.now()
+    if (!options.silent) setLoadingMessage('Refreshing NexBill data')
     setDataError('')
     try {
       const [profile, remoteItems, remoteTaxonomies] = await Promise.all([
-        fetchProfile(),
-        fetchGovernanceItems(),
-        fetchTaxonomies().catch((error) => {
+        timeWorkspaceStep('profile', fetchProfile),
+        timeWorkspaceStep('governance_items main table', fetchGovernanceItems),
+        timeWorkspaceStep('taxonomies', () => fetchTaxonomies().catch((error) => {
           console.warn(error)
           return [] as TaxonomyEntry[]
-        }),
+        })),
       ])
+      logWorkspaceTiming('workspace main load', workspaceStartedAt)
       if (profile) setUser(profile)
       setItems(remoteItems)
       setTaxonomies(mergeTaxonomies(createDefaultTaxonomies(), remoteTaxonomies))
@@ -199,6 +239,7 @@ function App() {
       setAuthNotice('')
       if (options.successMessage) setDataNotice(`${options.successMessage}: ${remoteItems.length} live records loaded from Supabase.`)
       cleanAuthHash()
+      void hydrateGovernanceItemDetails(remoteItems, loadSequence)
       return remoteItems
     } catch (error) {
       console.error(error)
@@ -209,7 +250,7 @@ function App() {
     } finally {
       if (!options.silent) setLoadingMessage('')
     }
-  }, [])
+  }, [hydrateGovernanceItemDetails])
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) return
@@ -218,10 +259,12 @@ function App() {
     async function initializeAuth() {
       setLoadingMessage('Checking session')
       try {
+        const sessionStartedAt = performance.now()
         const {
           data: { session },
           error,
         } = await client.auth.getSession()
+        logWorkspaceTiming('session check', sessionStartedAt)
         if (error) throw error
 
         if (!session) {
@@ -230,6 +273,7 @@ function App() {
           return
         }
 
+        setAuthStatus('signed_in')
         await loadAuthenticatedWorkspace()
       } catch (error) {
         console.error(error)
