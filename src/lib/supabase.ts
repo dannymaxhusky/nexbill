@@ -452,6 +452,15 @@ export async function fetchGovernanceItems() {
 
   if (error) throw error
   const items = (data ?? []).map((row) => mapGovernanceItem(row as GovernanceItemRow))
+  return items
+}
+
+export async function fetchGovernanceItemsWithDetails() {
+  const items = await fetchGovernanceItems()
+  return mergeGovernanceItemDetails(items)
+}
+
+export async function mergeGovernanceItemDetails(items: GovernanceItem[]) {
   const detailMap = await fetchGovernanceItemDetailMap(items)
   return items.map((item) => ({
     ...item,
