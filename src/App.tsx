@@ -172,12 +172,13 @@ function logWorkspaceTiming(label: string, startedAt: number) {
 function App() {
   const workspaceLoadSequence = useRef(0)
   const initialPasswordPanelMode = useMemo(() => readPasswordSetupType(), [])
+  const initialAuthNotice = useMemo(() => readAuthRedirectNotice(), [])
   const [page, setPage] = useState<PageKey>('dashboard')
   const [items, setItems] = useState<GovernanceItem[]>(() => (isSupabaseConfigured ? [] : demoItems))
   const [user, setUser] = useState<UserProfile>(demoUsers[0])
   const [taxonomies, setTaxonomies] = useState<TaxonomyEntry[]>(() => createDefaultTaxonomies())
   const [authStatus, setAuthStatus] = useState<AuthStatus>(() => (isSupabaseConfigured ? 'checking' : 'signed_in'))
-  const [authNotice, setAuthNotice] = useState('')
+  const [authNotice, setAuthNotice] = useState(initialAuthNotice ?? '')
   const [viewMode, setViewMode] = useState<ViewMode>('my')
   const [showClosed, setShowClosed] = useState(false)
   const [selectedModule, setSelectedModule] = useState<ModuleKey>('actions')
@@ -273,6 +274,7 @@ function App() {
         if (!session) {
           setAuthStatus('signed_out')
           setItems([])
+          cleanAuthUrl()
           return
         }
 
@@ -281,7 +283,8 @@ function App() {
       } catch (error) {
         console.error(error)
         setAuthStatus('signed_out')
-        setAuthNotice(readErrorMessage(error, 'Supabase session could not be checked.'))
+        setAuthNotice((notice) => notice || readErrorMessage(error, 'Supabase session could not be checked.'))
+        cleanAuthUrl()
       } finally {
         setLoadingMessage('')
       }
@@ -1109,6 +1112,23 @@ function readPasswordSetupType(): PasswordPanelMode | null {
   return null
 }
 
+function readAuthRedirectNotice() {
+  if (typeof window === 'undefined') return null
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  const searchParams = new URLSearchParams(window.location.search)
+  const errorCode = hashParams.get('error_code') ?? searchParams.get('error_code')
+  const errorDescription = hashParams.get('error_description') ?? searchParams.get('error_description')
+  const error = hashParams.get('error') ?? searchParams.get('error')
+
+  if (errorCode === 'otp_expired') {
+    return 'This password reset link is invalid or has expired. Request a new reset email and open the newest link.'
+  }
+  if (errorCode || errorDescription || error) {
+    return errorDescription?.replace(/\+/g, ' ') ?? 'The sign-in link could not be used. Request a new link and try again.'
+  }
+  return null
+}
+
 function passwordPanelTitle(mode: PasswordPanelMode) {
   if (mode === 'recovery') return 'Set a new password'
   if (mode === 'invite') return 'Finish account setup'
@@ -1150,7 +1170,10 @@ function cleanAuthUrl() {
     params.delete(name)
     return hasParam
   })
-  const hasAuthHash = window.location.hash.includes('access_token') || window.location.hash.includes('type=')
+  const hasAuthHash =
+    window.location.hash.includes('access_token') ||
+    window.location.hash.includes('type=') ||
+    window.location.hash.includes('error=')
   if (!removedSearchParam && !hasAuthHash) return
 
   const nextSearch = params.toString()
