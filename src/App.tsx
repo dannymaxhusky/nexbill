@@ -79,6 +79,7 @@ import type { AiReportDraftRecord, AiTriageOutput, AiTriageRun, AiTriageSeverity
 
 type PageKey = 'dashboard' | 'registers' | 'reporting' | 'program_site' | 'import' | 'admin' | 'audit'
 type AuthStatus = 'checking' | 'signed_out' | 'signed_in'
+type PasswordPanelMode = 'account' | 'recovery' | 'invite'
 type SortDirection = 'asc' | 'desc'
 type TableSort = { column: string; direction: SortDirection } | null
 type ColumnFilters = Record<string, string>
@@ -170,6 +171,7 @@ function logWorkspaceTiming(label: string, startedAt: number) {
 
 function App() {
   const workspaceLoadSequence = useRef(0)
+  const initialPasswordPanelMode = useMemo(() => readPasswordSetupType(), [])
   const [page, setPage] = useState<PageKey>('dashboard')
   const [items, setItems] = useState<GovernanceItem[]>(() => (isSupabaseConfigured ? [] : demoItems))
   const [user, setUser] = useState<UserProfile>(demoUsers[0])
@@ -192,7 +194,8 @@ function App() {
   const [signupFullName, setSignupFullName] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [passwordMessage, setPasswordMessage] = useState('')
-  const [passwordPanelOpen, setPasswordPanelOpen] = useState(() => hasPasswordSetupHash())
+  const [passwordPanelMode, setPasswordPanelMode] = useState<PasswordPanelMode>(initialPasswordPanelMode ?? 'account')
+  const [passwordPanelOpen, setPasswordPanelOpen] = useState(() => Boolean(initialPasswordPanelMode))
 
   const hydrateGovernanceItemDetails = useCallback(async (baseItems: GovernanceItem[], loadSequence: number) => {
     if (!baseItems.length) return
@@ -238,7 +241,7 @@ function App() {
       setAuthStatus('signed_in')
       setAuthNotice('')
       if (options.successMessage) setDataNotice(`${options.successMessage}: ${remoteItems.length} live records loaded from Supabase.`)
-      cleanAuthHash()
+      cleanAuthUrl()
       void hydrateGovernanceItemDetails(remoteItems, loadSequence)
       return remoteItems
     } catch (error) {
@@ -288,7 +291,10 @@ function App() {
       data: { subscription },
     } = client.auth.onAuthStateChange((event, session) => {
       if (event === 'INITIAL_SESSION') return
-      if (event === 'PASSWORD_RECOVERY') setPasswordPanelOpen(true)
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordPanelMode('recovery')
+        setPasswordPanelOpen(true)
+      }
       if (!session) {
         setAuthStatus('signed_out')
         setItems([])
@@ -497,7 +503,7 @@ function App() {
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
-          emailRedirectTo: window.location.origin,
+          emailRedirectTo: `${window.location.origin}?first_access=1`,
           shouldCreateUser: true,
           data: {
             full_name: fullName,
@@ -528,7 +534,7 @@ function App() {
     setLoadingMessage('Sending reset link')
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(authEmail.trim(), {
-        redirectTo: window.location.origin,
+        redirectTo: `${window.location.origin}?password_reset=1`,
       })
       if (error) throw error
       setAuthNotice('Password reset link sent. Open it to set a new password.')
@@ -554,9 +560,13 @@ function App() {
       const { error } = await supabase.auth.updateUser({ password: newPassword })
       if (error) throw error
       setNewPassword('')
-      setPasswordMessage('')
-      setAuthNotice('Password updated. Email and password sign-in is now available.')
-      setPasswordPanelOpen(false)
+      setPasswordPanelMode('account')
+      setPasswordMessage('Password updated. Email and password sign-in is now available.')
+      setAuthNotice('')
+      window.setTimeout(() => {
+        setPasswordPanelOpen(false)
+        setPasswordMessage('')
+      }, 2500)
     } catch (error) {
       console.error(error)
       setPasswordMessage(readErrorMessage(error, 'Password could not be updated.'))
@@ -701,7 +711,7 @@ function App() {
               </button>
               <button className="button secondary" onClick={() => setPasswordPanelOpen((open) => !open)}>
                 <KeyRound size={16} />
-                Password
+                Set password
               </button>
               <button className="button secondary" onClick={handleSignOut}>
                 <Lock size={16} />
@@ -735,11 +745,17 @@ function App() {
         {dataNotice && <div className="notice-line">{dataNotice}</div>}
         {dataError && <div className="error-line">{dataError}</div>}
         {isSupabaseConfigured && passwordPanelOpen && (
-          <section className="account-panel">
-            <form onSubmit={handleUpdatePassword}>
+          <section className={`account-panel ${passwordPanelMode === 'account' ? '' : 'is-password-recovery'}`}>
+            <div className="account-panel-copy">
               <KeyRound size={18} />
+              <div>
+                <strong>{passwordPanelTitle(passwordPanelMode)}</strong>
+                <span>{passwordPanelDescription(passwordPanelMode)}</span>
+              </div>
+            </div>
+            <form onSubmit={handleUpdatePassword}>
               <label>
-                Account password
+                New password
                 <input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} type="password" placeholder="New password" />
               </label>
               <button className="button primary" type="submit">Update password</button>
@@ -1083,11 +1099,26 @@ function pageTitle(page: PageKey) {
   return item?.label ?? 'Dashboard'
 }
 
-function hasPasswordSetupHash() {
-  if (typeof window === 'undefined') return false
-  const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
-  const type = params.get('type')
-  return type === 'recovery' || type === 'invite'
+function readPasswordSetupType(): PasswordPanelMode | null {
+  if (typeof window === 'undefined') return null
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  const searchParams = new URLSearchParams(window.location.search)
+  const type = hashParams.get('type') ?? searchParams.get('type')
+  if (type === 'recovery' || searchParams.get('password_reset') === '1') return 'recovery'
+  if (type === 'invite' || searchParams.get('first_access') === '1') return 'invite'
+  return null
+}
+
+function passwordPanelTitle(mode: PasswordPanelMode) {
+  if (mode === 'recovery') return 'Set a new password'
+  if (mode === 'invite') return 'Finish account setup'
+  return 'Account password'
+}
+
+function passwordPanelDescription(mode: PasswordPanelMode) {
+  if (mode === 'recovery') return 'You opened a password reset link. Choose a new password before continuing.'
+  if (mode === 'invite') return 'Create a password so future sign-ins can use email and password instead of a magic link.'
+  return 'Create or update your password for email and password sign-in.'
 }
 
 function readStoredBoolean(key: string) {
@@ -1109,9 +1140,21 @@ function readLocalFileDataUrl(file: File) {
   })
 }
 
-function cleanAuthHash() {
-  if (typeof window === 'undefined' || !window.location.hash.includes('access_token')) return
-  window.history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}`)
+function cleanAuthUrl() {
+  if (typeof window === 'undefined') return
+
+  const params = new URLSearchParams(window.location.search)
+  const authParamNames = ['code', 'error', 'error_code', 'error_description', 'first_access', 'password_reset', 'type']
+  const removedSearchParam = authParamNames.some((name) => {
+    const hasParam = params.has(name)
+    params.delete(name)
+    return hasParam
+  })
+  const hasAuthHash = window.location.hash.includes('access_token') || window.location.hash.includes('type=')
+  if (!removedSearchParam && !hasAuthHash) return
+
+  const nextSearch = params.toString()
+  window.history.replaceState(null, document.title, `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}`)
 }
 
 function readErrorMessage(error: unknown, fallback: string) {
