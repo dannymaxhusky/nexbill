@@ -80,6 +80,12 @@ import type { AiReportDraftRecord, AiTriageOutput, AiTriageRun, AiTriageSeverity
 type PageKey = 'dashboard' | 'registers' | 'reporting' | 'program_site' | 'import' | 'admin' | 'audit'
 type AuthStatus = 'checking' | 'signed_out' | 'signed_in'
 type PasswordPanelMode = 'account' | 'recovery' | 'invite'
+type AuthEmailLinkType = 'signup' | 'invite' | 'magiclink' | 'recovery' | 'email_change' | 'email'
+interface PendingAuthLink {
+  tokenHash: string
+  type: AuthEmailLinkType
+  passwordMode?: PasswordPanelMode
+}
 type SortDirection = 'asc' | 'desc'
 type TableSort = { column: string; direction: SortDirection } | null
 type ColumnFilters = Record<string, string>
@@ -171,6 +177,7 @@ function logWorkspaceTiming(label: string, startedAt: number) {
 
 function App() {
   const workspaceLoadSequence = useRef(0)
+  const initialPendingAuthLink = useMemo(() => readPendingAuthLink(), [])
   const initialPasswordPanelMode = useMemo(() => readPasswordSetupType(), [])
   const initialAuthNotice = useMemo(() => readAuthRedirectNotice(), [])
   const [page, setPage] = useState<PageKey>('dashboard')
@@ -197,6 +204,7 @@ function App() {
   const [passwordMessage, setPasswordMessage] = useState('')
   const [passwordPanelMode, setPasswordPanelMode] = useState<PasswordPanelMode>(initialPasswordPanelMode ?? 'account')
   const [passwordPanelOpen, setPasswordPanelOpen] = useState(() => Boolean(initialPasswordPanelMode))
+  const [pendingAuthLink, setPendingAuthLink] = useState<PendingAuthLink | null>(initialPendingAuthLink)
 
   const hydrateGovernanceItemDetails = useCallback(async (baseItems: GovernanceItem[], loadSequence: number) => {
     if (!baseItems.length) return
@@ -274,7 +282,7 @@ function App() {
         if (!session) {
           setAuthStatus('signed_out')
           setItems([])
-          cleanAuthUrl()
+          if (!initialPendingAuthLink) cleanAuthUrl()
           return
         }
 
@@ -312,7 +320,7 @@ function App() {
 
     void initializeAuth()
     return () => subscription.unsubscribe()
-  }, [loadAuthenticatedWorkspace])
+  }, [initialPendingAuthLink, loadAuthenticatedWorkspace])
 
   const filteredItems = useMemo(() => {
     const scoped = filterForView(items, user, viewMode, showClosed)
@@ -549,6 +557,35 @@ function App() {
     }
   }
 
+  async function handleVerifyEmailLink() {
+    if (!supabase || !pendingAuthLink) return
+
+    setAuthNotice('')
+    setLoadingMessage(authLinkLoadingMessage(pendingAuthLink))
+    try {
+      const { error } = await supabase.auth.verifyOtp({
+        token_hash: pendingAuthLink.tokenHash,
+        type: pendingAuthLink.type,
+      })
+      if (error) throw error
+
+      setPendingAuthLink(null)
+      if (pendingAuthLink.passwordMode) {
+        setPasswordPanelMode(pendingAuthLink.passwordMode)
+        setPasswordPanelOpen(true)
+      }
+      setAuthStatus('signed_in')
+      await loadAuthenticatedWorkspace()
+    } catch (error) {
+      console.error(error)
+      setAuthStatus('signed_out')
+      setAuthNotice(readErrorMessage(error, 'The email link could not be verified. Request a new link and try again.'))
+      cleanAuthUrl()
+    } finally {
+      setLoadingMessage('')
+    }
+  }
+
   async function handleUpdatePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase) return
@@ -599,11 +636,13 @@ function App() {
         authNotice={authNotice}
         authStatus={authStatus}
         loadingMessage={loadingMessage}
+        pendingAuthLink={pendingAuthLink}
         setAuthEmail={setAuthEmail}
         setAuthPassword={setAuthPassword}
         onSignIn={handleSignIn}
         onMagicLink={handleMagicLink}
         onPasswordReset={handlePasswordReset}
+        onVerifyEmailLink={handleVerifyEmailLink}
         signupPrefix={signupPrefix}
         signupFullName={signupFullName}
         setSignupPrefix={setSignupPrefix}
@@ -822,6 +861,7 @@ function LoginPage({
   authNotice,
   authStatus,
   loadingMessage,
+  pendingAuthLink,
   signupPrefix,
   signupFullName,
   setAuthEmail,
@@ -831,6 +871,7 @@ function LoginPage({
   onSignIn,
   onMagicLink,
   onPasswordReset,
+  onVerifyEmailLink,
   onAccessRequest,
 }: {
   authEmail: string
@@ -838,6 +879,7 @@ function LoginPage({
   authNotice: string
   authStatus: AuthStatus
   loadingMessage: string
+  pendingAuthLink: PendingAuthLink | null
   signupPrefix: string
   signupFullName: string
   setAuthEmail: (value: string) => void
@@ -847,6 +889,7 @@ function LoginPage({
   onSignIn: (event: FormEvent<HTMLFormElement>) => void
   onMagicLink: () => void
   onPasswordReset: () => void
+  onVerifyEmailLink: () => void
   onAccessRequest: (event: FormEvent<HTMLFormElement>) => void
 }) {
   const busy = authStatus === 'checking' || Boolean(loadingMessage)
@@ -884,6 +927,16 @@ function LoginPage({
 
           {(loadingMessage || authNotice) && (
             <div className="auth-message">{loadingMessage || authNotice}</div>
+          )}
+          {pendingAuthLink && (
+            <div className="auth-link-panel">
+              <strong>{authLinkTitle(pendingAuthLink)}</strong>
+              <span>{authLinkDescription(pendingAuthLink)}</span>
+              <button className="button primary" disabled={busy} onClick={onVerifyEmailLink} type="button">
+                <KeyRound size={16} />
+                {authLinkButtonLabel(pendingAuthLink)}
+              </button>
+            </div>
           )}
         </form>
 
@@ -1112,6 +1165,30 @@ function readPasswordSetupType(): PasswordPanelMode | null {
   return null
 }
 
+function readPendingAuthLink(): PendingAuthLink | null {
+  if (typeof window === 'undefined') return null
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  const searchParams = new URLSearchParams(window.location.search)
+  const tokenHash = searchParams.get('token_hash') ?? hashParams.get('token_hash')
+  const rawType = searchParams.get('type') ?? hashParams.get('type')
+  const type = readAuthEmailLinkType(rawType)
+  if (!tokenHash || !type) return null
+
+  const passwordMode =
+    type === 'recovery' || searchParams.get('password_reset') === '1'
+      ? 'recovery'
+      : type === 'invite' || searchParams.get('first_access') === '1'
+        ? 'invite'
+        : undefined
+
+  return { tokenHash, type, passwordMode }
+}
+
+function readAuthEmailLinkType(value: string | null): AuthEmailLinkType | null {
+  const validTypes: AuthEmailLinkType[] = ['signup', 'invite', 'magiclink', 'recovery', 'email_change', 'email']
+  return validTypes.includes(value as AuthEmailLinkType) ? value as AuthEmailLinkType : null
+}
+
 function readAuthRedirectNotice() {
   if (typeof window === 'undefined') return null
   const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''))
@@ -1127,6 +1204,34 @@ function readAuthRedirectNotice() {
     return errorDescription?.replace(/\+/g, ' ') ?? 'The sign-in link could not be used. Request a new link and try again.'
   }
   return null
+}
+
+function authLinkTitle(link: PendingAuthLink) {
+  if (link.passwordMode === 'recovery') return 'Ready to reset your password'
+  if (link.passwordMode === 'invite') return 'Ready to finish account setup'
+  return 'Ready to continue sign-in'
+}
+
+function authLinkDescription(link: PendingAuthLink) {
+  if (link.passwordMode === 'recovery') {
+    return 'This page has the reset token, but it will not be used until you click the button below.'
+  }
+  if (link.passwordMode === 'invite') {
+    return 'This page has your first-access token. Click below to sign in, then set your password.'
+  }
+  return 'This page has your email sign-in token. Click below to verify it and continue.'
+}
+
+function authLinkButtonLabel(link: PendingAuthLink) {
+  if (link.passwordMode === 'recovery') return 'Continue password reset'
+  if (link.passwordMode === 'invite') return 'Continue account setup'
+  return 'Continue sign-in'
+}
+
+function authLinkLoadingMessage(link: PendingAuthLink) {
+  if (link.passwordMode === 'recovery') return 'Opening password reset'
+  if (link.passwordMode === 'invite') return 'Opening account setup'
+  return 'Verifying email link'
 }
 
 function passwordPanelTitle(mode: PasswordPanelMode) {
@@ -1164,7 +1269,7 @@ function cleanAuthUrl() {
   if (typeof window === 'undefined') return
 
   const params = new URLSearchParams(window.location.search)
-  const authParamNames = ['code', 'error', 'error_code', 'error_description', 'first_access', 'password_reset', 'type']
+  const authParamNames = ['code', 'error', 'error_code', 'error_description', 'first_access', 'password_reset', 'token_hash', 'type']
   const removedSearchParam = authParamNames.some((name) => {
     const hasParam = params.has(name)
     params.delete(name)

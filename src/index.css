@@ -231,6 +231,30 @@ button:disabled {
   line-height: 1.4;
 }
 
+.auth-link-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #c9d0f0;
+  border-radius: 7px;
+  background: var(--pale-blue);
+}
+
+.auth-link-panel strong,
+.auth-link-panel span {
+  display: block;
+}
+
+.auth-link-panel strong {
+  color: var(--ink);
+}
+
+.auth-link-panel span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .sidebar {
   position: sticky;
   top: 0;
