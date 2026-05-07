@@ -46,7 +46,13 @@ Use `.env.example` as the starting point. `VITE_SUPABASE_ANON_KEY` is also suppo
    - `https://nexbill-pm.netlify.app/**`
    - `http://localhost:5173/**`
 6. For production invites, magic links, and password recovery, configure a custom SMTP provider in Supabase Auth email settings. Supabase's default email sender is rate-limited and is only suitable for early testing.
-7. Set the Netlify environment variables:
+7. Update Supabase Auth email templates so enterprise email scanners do not consume one-time links before users click them. Do not link directly to `{{ .ConfirmationURL }}` for password recovery or magic links. Link to NexBill with `token_hash`, then the app asks the user to click a button before calling `verifyOtp`:
+   - Password recovery link: `{{ .SiteURL }}?token_hash={{ .TokenHash }}&type=recovery&password_reset=1`
+   - Magic link sign-in: `{{ .SiteURL }}?token_hash={{ .TokenHash }}&type=magiclink`
+   - First-access / access request link: `{{ .SiteURL }}?token_hash={{ .TokenHash }}&type=magiclink&first_access=1`
+   - Invite link, if Supabase invites are used: `{{ .SiteURL }}?token_hash={{ .TokenHash }}&type=invite&first_access=1`
+   This indirection is required for Outlook, enterprise mail gateways, and link scanners that prefetch email links. Prefetching opens the NexBill page only; the OTP is consumed only after the real user clicks the in-app continue button.
+8. Set the Netlify environment variables:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_PUBLISHABLE_KEY`
    - `SUPABASE_URL`
