@@ -583,6 +583,33 @@ button:disabled {
 .account-panel {
   padding: 12px 14px;
   margin-bottom: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.account-panel.is-password-recovery {
+  border-color: #f7d27a;
+  background: var(--amber-soft);
+}
+
+.account-panel-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.account-panel-copy strong {
+  display: block;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.account-panel-copy span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .account-panel form {
