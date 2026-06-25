@@ -52,6 +52,7 @@ interface TriageOutput {
 interface OpenAiConfig {
   apiKey: string
   model: string
+  models: string[]
   baseUrl: string
 }
 
@@ -165,12 +166,24 @@ async function generateOpenAiTriage(scope: string, filters: Record<string, unkno
 }
 
 async function requestStructuredJson(config: OpenAiConfig, prompt: string, schemaName: string, schema: Record<string, unknown>) {
-  try {
-    return await requestResponsesJson(config, prompt, schemaName, schema)
-  } catch (error) {
-    if (!shouldTryChatCompletions(error)) throw error
-    return requestChatCompletionsJson(config, prompt, schemaName, schema)
+  const modelErrors: string[] = []
+
+  for (const model of config.models) {
+    const modelConfig = { ...config, model }
+    try {
+      try {
+        return await requestResponsesJson(modelConfig, prompt, schemaName, schema)
+      } catch (error) {
+        if (!shouldTryChatCompletions(error)) throw error
+        return await requestChatCompletionsJson(modelConfig, prompt, schemaName, schema)
+      }
+    } catch (error) {
+      if (!shouldTryNextModel(error)) throw error
+      modelErrors.push(`${model}: ${readErrorMessage(error)}`)
+    }
   }
+
+  throw new Error(`All configured OpenAI models failed: ${modelErrors.join(' | ')}`)
 }
 
 async function requestResponsesJson(config: OpenAiConfig, prompt: string, schemaName: string, schema: Record<string, unknown>) {
@@ -293,13 +306,28 @@ function generateDeterministicTriage(items: GovernanceItemPayload[]): TriageOutp
 
 function readOpenAiConfig(): OpenAiConfig | null {
   const apiKey = process.env.OPENAI_API_KEY?.trim()
-  const model = process.env.OPENAI_MODEL?.trim()
+  const models = readOpenAiModels()
+  const model = models[0]
   if (!apiKey || !model) return null
   return {
     apiKey,
     model,
+    models,
     baseUrl: normalizeBaseUrl(process.env.OPENAI_BASE_URL),
   }
+}
+
+function readOpenAiModels() {
+  return uniqueValues([
+    process.env.OPENAI_MODEL,
+    ...(process.env.OPENAI_MODEL_FALLBACKS ?? process.env.OPENAI_MODELS ?? '')
+      .split(',')
+      .map((model) => model.trim()),
+  ])
+}
+
+function uniqueValues(values: Array<string | undefined>) {
+  return [...new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])]
 }
 
 function normalizeBaseUrl(value?: string) {
@@ -315,8 +343,19 @@ function shouldTryChatCompletions(error: unknown) {
   return error instanceof Error && /OpenAI responses request failed: (400|404|405|501)/.test(error.message)
 }
 
+function shouldTryNextModel(error: unknown) {
+  return error instanceof Error && (
+    /OpenAI (responses|chat\/completions) request failed: (404|429|503)/.test(error.message) ||
+    /model_not_found|no available channel|无可用渠道|distributor/i.test(error.message)
+  )
+}
+
 function createOpenAiError(api: string, status: number, detail: string) {
   return new Error(`OpenAI ${api} request failed: ${status}${detail ? ` ${detail.slice(0, 220)}` : ''}`)
+}
+
+function readErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
 }
 
 async function safeResponseText(response: Response) {

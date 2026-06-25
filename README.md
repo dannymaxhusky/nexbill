@@ -32,9 +32,10 @@ SUPABASE_SERVICE_ROLE_KEY=
 OPENAI_API_KEY=
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=
+OPENAI_MODEL_FALLBACKS=
 ```
 
-Use `.env.example` as the starting point. `VITE_SUPABASE_ANON_KEY` is also supported for older Supabase projects, but new projects should use `VITE_SUPABASE_PUBLISHABLE_KEY`. `OPENAI_BASE_URL` can point to either the official OpenAI API base URL or an OpenAI-compatible gateway, usually ending in `/v1`.
+Use `.env.example` as the starting point. `VITE_SUPABASE_ANON_KEY` is also supported for older Supabase projects, but new projects should use `VITE_SUPABASE_PUBLISHABLE_KEY`. `OPENAI_BASE_URL` can point to either the official OpenAI API base URL or an OpenAI-compatible gateway, usually ending in `/v1`. `OPENAI_MODEL` is the primary model, and optional `OPENAI_MODEL_FALLBACKS` can be a comma-separated fallback list, for example `gpt-4o-mini,gpt-4o`, when the gateway reports a model/channel as unavailable.
 
 ## Supabase Setup
 
@@ -57,7 +58,7 @@ Use `.env.example` as the starting point. `VITE_SUPABASE_ANON_KEY` is also suppo
    - `VITE_SUPABASE_PUBLISHABLE_KEY`
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_ROLE_KEY`
-   - `OPENAI_API_KEY`, `OPENAI_MODEL`, and optional `OPENAI_BASE_URL` if AI report drafts and governance triage should call OpenAI or an OpenAI-compatible gateway.
+   - `OPENAI_API_KEY`, `OPENAI_MODEL`, optional `OPENAI_MODEL_FALLBACKS`, and optional `OPENAI_BASE_URL` if AI report drafts and governance triage should call OpenAI or an OpenAI-compatible gateway.
 
 This is a Vite + React app, not a Next.js app, so it does not use `@supabase/ssr`, `page.tsx`, or Next middleware. Session persistence is handled by `@supabase/supabase-js` in the browser, and privileged server writes run through Netlify Functions.
 
