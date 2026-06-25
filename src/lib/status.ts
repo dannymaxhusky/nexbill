@@ -4,6 +4,25 @@ import { riskLevelRank } from '../data/riskMatrix'
 export const closedStatusTerms = ['closed', 'completed', 'actioned', 'duplicate', 'not applicable', 'mitigated']
 export const defaultGridEditRoles: Role[] = ['super_admin', 'program_manager', 'ctm']
 
+// Key programme milestone — used for the days-to-go-live countdown.
+export const GO_LIVE_DATE = '2026-12-31'
+
+// A row is "blank" when it carries an ID but no real content (no title/summary
+// beyond the code itself). Emma asked for these to be hidden everywhere so the
+// registers and dashboards only show meaningful records.
+export function isBlankItem(item: GovernanceItem) {
+  const title = (item.title ?? '').trim()
+  const summary = (item.summary ?? '').trim()
+  const code = (item.itemCode ?? '').trim()
+  const meaningfulTitle = title && title.toLowerCase() !== code.toLowerCase()
+  return !meaningfulTitle && !summary
+}
+
+export function daysToGoLive(reference: string = GO_LIVE_DATE) {
+  const days = daysBetween(reference)
+  return Number.isFinite(days) ? days : undefined
+}
+
 export function isClosedStatus(status?: string, closedAt?: string) {
   if (closedAt) return true
   const normalized = status?.toLowerCase() ?? ''
@@ -55,6 +74,7 @@ export function matchesMyView(item: GovernanceItem, user: UserProfile) {
 
 export function filterForView(items: GovernanceItem[], user: UserProfile, viewMode: ViewMode, showClosed: boolean) {
   return items.filter((item) => {
+    if (isBlankItem(item)) return false
     if (!showClosed && isClosedStatus(item.status, item.closedAt)) return false
     if (viewMode === 'all') return true
     return matchesMyView(item, user)

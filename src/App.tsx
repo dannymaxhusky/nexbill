@@ -27,7 +27,6 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
   Table2,
   Trash2,
   Upload,
@@ -40,7 +39,6 @@ import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import { moduleConfigByKey, moduleConfigs, phaseOptions, roleLabels, workstreamOptions } from './data/moduleConfig'
 import { demoItems, demoReports, demoUsers } from './data/demoData'
 import { riskImpactLabels, riskLevelDefinitions, riskLevelOptions, riskLevelTone, riskMatrixRows, riskProbabilityDefinitions } from './data/riskMatrix'
-import { calculateMetrics } from './lib/metrics'
 import { generateLocalReport, reportTypeLabel } from './lib/reporting'
 import {
   addCommentUpdate,
@@ -73,8 +71,9 @@ import {
   upsertTaxonomyEntry,
   upsertGovernanceItem,
 } from './lib/supabase'
-import { canDeleteItem, canEditItem, canGridEdit, daysBetween, defaultGridEditRoles, filterForView, formatDate, isClosedStatus, nextItemCode, sortItems } from './lib/status'
+import { canDeleteItem, canEditItem, canGridEdit, defaultGridEditRoles, filterForView, formatDate, isClosedStatus, nextItemCode, sortItems } from './lib/status'
 import { moduleImportCoverage, previewWorkbook } from './lib/workbookImport'
+import GovernanceReport from './components/GovernanceReport'
 import type { AiReportDraftRecord, AiTriageOutput, AiTriageRun, AiTriageSeverity, AttachmentRecord, AuditEvent, ColumnSettings, CommentUpdate, GovernanceItem, ManagedProfile, ModuleConfig, ModuleKey, ProgramSitePageRecord, ReportDraft, ReportSnapshot, ReportType, Role, TaxonomyEntry, UserProfile, ViewMode } from './types'
 
 type PageKey = 'dashboard' | 'registers' | 'reporting' | 'program_site' | 'import' | 'admin' | 'audit'
@@ -181,6 +180,7 @@ function App() {
   const initialPasswordPanelMode = useMemo(() => readPasswordSetupType(), [])
   const initialAuthNotice = useMemo(() => readAuthRedirectNotice(), [])
   const [page, setPage] = useState<PageKey>('dashboard')
+  const [dashboardPersona, setDashboardPersona] = useState<ReportType>('team_leads')
   const [items, setItems] = useState<GovernanceItem[]>(() => (isSupabaseConfigured ? [] : demoItems))
   const [user, setUser] = useState<UserProfile>(demoUsers[0])
   const [taxonomies, setTaxonomies] = useState<TaxonomyEntry[]>(() => createDefaultTaxonomies())
@@ -193,6 +193,7 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readStoredBoolean('nexbill-sidebar-collapsed'))
   const [profileDrawerOpen, setProfileDrawerOpen] = useState(false)
+  const [activeItem, setActiveItem] = useState<GovernanceItem | null>(null)
   const [loadingMessage, setLoadingMessage] = useState('')
   const [dataNotice, setDataNotice] = useState('')
   const [dataError, setDataError] = useState('')
@@ -337,7 +338,6 @@ function App() {
     return sortItems(searched)
   }, [items, query, showClosed, user, viewMode])
 
-  const metrics = useMemo(() => calculateMetrics(filteredItems), [filteredItems])
   const columnSettings = useMemo(() => buildColumnSettings(taxonomies), [taxonomies])
   const gridEditRoles = useMemo(() => buildGridEditRoles(taxonomies), [taxonomies])
 
@@ -807,10 +807,7 @@ function App() {
         )}
 
         {page === 'dashboard' && (
-          <Dashboard metrics={metrics} items={filteredItems} user={user} onOpenRegisters={(moduleKey) => {
-            setSelectedModule(moduleKey)
-            setPage('registers')
-          }} />
+          <GovernanceReport items={filteredItems} user={user} persona={dashboardPersona} onPersonaChange={setDashboardPersona} onOpenItem={setActiveItem} />
         )}
         {page === 'registers' && (
           <RegistersPage
@@ -850,6 +847,20 @@ function App() {
           />
         )}
         {page === 'audit' && <AuditPage items={items} user={user} />}
+
+        {activeItem && (
+          <ItemDrawer
+            item={activeItem}
+            config={moduleConfigByKey[activeItem.module]}
+            taxonomies={taxonomies}
+            user={user}
+            onClose={() => setActiveItem(null)}
+            onSave={(item) => {
+              void handleSaveItem(item)
+              setActiveItem(null)
+            }}
+          />
+        )}
       </main>
     </div>
   )
@@ -894,86 +905,124 @@ function LoginPage({
 }) {
   const busy = authStatus === 'checking' || Boolean(loadingMessage)
   const normalizedSignupPrefix = normalizeLenovoEmailPrefix(signupPrefix)
+  const [loginMode, setLoginMode] = useState<'sign_in' | 'request'>('sign_in')
+  const statusMessage = friendlyAuthMessage(loadingMessage || authNotice)
+  const statusIsError = /cannot reach|unreachable|invalid|failed|error|expired/i.test(statusMessage)
 
   return (
     <main className="login-screen">
       <section className="login-card">
         <div className="login-brand">
           <div className="brand-mark">Lenovo</div>
-          <p className="eyebrow">NexBill Project Governance</p>
-          <h1>Sign in to continue</h1>
-          <p>Access is controlled by Supabase Auth and project roles.</p>
+          <div>
+            <p className="eyebrow">Programme governance</p>
+            <h1>NexBill Programme</h1>
+            <p className="login-tagline">One workspace for risks, decisions, financials and SteerCo reporting.</p>
+          </div>
+          <ul className="login-features">
+            <li>Role-based reporting for team leads, SMEs and the SteerCo</li>
+            <li>Fourteen live governance registers with full audit trail</li>
+            <li>AI-assisted triage, narrative drafts and workbook import</li>
+          </ul>
+          <p className="login-foot">Access is restricted to the Lenovo NexBill programme team.</p>
         </div>
 
-        <form className="login-form" onSubmit={onSignIn}>
-          <label>
-            Email
-            <input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} autoComplete="email" placeholder="name@company.com" type="email" />
-          </label>
-          <label>
-            Password
-            <input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} autoComplete="current-password" placeholder="Password" type="password" />
-          </label>
-
-          <button className="button primary" disabled={busy || !authEmail || !authPassword} type="submit">
-            <Lock size={16} />
-            Sign in
-          </button>
-
-          <div className="auth-options">
-            <button className="button secondary" disabled={busy || !authEmail} onClick={onMagicLink} type="button">Magic link</button>
-            <button className="button secondary" disabled={busy || !authEmail} onClick={onPasswordReset} type="button">Reset password</button>
-          </div>
-
-          {(loadingMessage || authNotice) && (
-            <div className="auth-message">{loadingMessage || authNotice}</div>
-          )}
-          {pendingAuthLink && (
-            <div className="auth-link-panel">
-              <strong>{authLinkTitle(pendingAuthLink)}</strong>
-              <span>{authLinkDescription(pendingAuthLink)}</span>
-              <button className="button primary" disabled={busy} onClick={onVerifyEmailLink} type="button">
-                <KeyRound size={16} />
-                {authLinkButtonLabel(pendingAuthLink)}
-              </button>
+        {loginMode === 'sign_in' ? (
+          <form className="login-form" onSubmit={onSignIn}>
+            <div className="login-panel-head">
+              <h2>Sign in</h2>
+              <p>Use your Lenovo account to continue.</p>
             </div>
-          )}
-        </form>
+            <label>
+              Email
+              <input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} autoComplete="email" placeholder="name@lenovo.com" type="email" />
+            </label>
+            <label>
+              Password
+              <input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} autoComplete="current-password" placeholder="Your password" type="password" />
+            </label>
 
-        <form className="access-request-form" onSubmit={onAccessRequest}>
-          <div>
-            <span className="code">Lenovo access request</span>
-            <h2>Request access</h2>
-            <p>Use your Lenovo email. The domain is locked to keep NexBill access inside Lenovo.</p>
-          </div>
-          <label>
-            Full name
-            <input
-              value={signupFullName}
-              onChange={(event) => setSignupFullName(event.target.value)}
-              autoComplete="name"
-              placeholder="Your name"
-            />
-          </label>
-          <label>
-            Lenovo email
-            <div className="email-prefix-control">
+            <button className="button primary" disabled={busy || !authEmail || !authPassword} type="submit">
+              <Lock size={16} />
+              {busy ? 'Working…' : 'Sign in'}
+            </button>
+
+            <div className="auth-options">
+              <button className="button secondary" disabled={busy || !authEmail} onClick={onMagicLink} type="button">Email me a magic link</button>
+              <button className="button secondary" disabled={busy || !authEmail} onClick={onPasswordReset} type="button">Reset password</button>
+            </div>
+            <p className="login-hint">Magic link and reset both need your email filled in above.</p>
+
+            {statusMessage && (
+              <div className={`auth-message${statusIsError ? ' is-error' : ''}`}>{statusMessage}</div>
+            )}
+            {pendingAuthLink && (
+              <div className="auth-link-panel">
+                <strong>{authLinkTitle(pendingAuthLink)}</strong>
+                <span>{authLinkDescription(pendingAuthLink)}</span>
+                <button className="button primary" disabled={busy} onClick={onVerifyEmailLink} type="button">
+                  <KeyRound size={16} />
+                  {authLinkButtonLabel(pendingAuthLink)}
+                </button>
+              </div>
+            )}
+
+            <button className="login-switch" type="button" onClick={() => setLoginMode('request')}>
+              New to NexBill? Request access
+            </button>
+          </form>
+        ) : (
+          <form className="login-form" onSubmit={onAccessRequest}>
+            <div className="login-panel-head">
+              <h2>Request access</h2>
+              <p>Use your Lenovo email — the domain is locked to keep NexBill inside Lenovo. You will receive a magic link once approved.</p>
+            </div>
+            <label>
+              Full name
               <input
-                value={signupPrefix}
-                onChange={(event) => setSignupPrefix(event.target.value)}
-                autoComplete="username"
-                placeholder="firstname.lastname"
+                value={signupFullName}
+                onChange={(event) => setSignupFullName(event.target.value)}
+                autoComplete="name"
+                placeholder="Your name"
               />
-              <span>@lenovo.com</span>
-            </div>
-          </label>
-          <button className="button secondary" disabled={busy || !normalizedSignupPrefix || !signupFullName.trim()} type="submit">
-            Request magic link
-          </button>
-        </form>
+            </label>
+            <label>
+              Lenovo email
+              <div className="email-prefix-control">
+                <input
+                  value={signupPrefix}
+                  onChange={(event) => setSignupPrefix(event.target.value)}
+                  autoComplete="username"
+                  placeholder="firstname.lastname"
+                />
+                <span>@lenovo.com</span>
+              </div>
+            </label>
+            <button className="button primary" disabled={busy || !normalizedSignupPrefix || !signupFullName.trim()} type="submit">
+              Request magic link
+            </button>
+
+            {statusMessage && (
+              <div className={`auth-message${statusIsError ? ' is-error' : ''}`}>{statusMessage}</div>
+            )}
+
+            <button className="login-switch" type="button" onClick={() => setLoginMode('sign_in')}>
+              Already have access? Sign in
+            </button>
+          </form>
+        )}
       </section>
     </main>
   )
+}
+
+function friendlyAuthMessage(message: string) {
+  if (!message) return ''
+  if (/failed to fetch|fetch failed|networkerror|network error|load failed|timeout/i.test(message)) {
+    return 'Cannot reach the sign-in service. The Supabase project may be paused (free projects pause after a week of inactivity) — restore it from the Supabase dashboard, then try again.'
+  }
+  if (/checking session/i.test(message)) return 'Checking your session…'
+  return message
 }
 
 function normalizeLenovoEmailPrefix(value: string) {
@@ -1509,7 +1558,10 @@ function fieldOptions(field: ModuleConfig['fields'][number], taxonomies: Taxonom
   if (field.key === 'workstream') return activeTaxonomyValues(taxonomies, 'workstream', workstreamOptions)
   if (field.key === 'phase') return activeTaxonomyValues(taxonomies, 'phase', phaseOptions)
   if (field.key === 'priority') return activeTaxonomyValues(taxonomies, 'priority', field.options ?? [])
-  if (field.key === 'ragStatus' && field.options?.some((option) => Boolean(riskLevelTone(option)))) return activeTaxonomyValues(taxonomies, 'risk_level', field.options)
+  // A true risk-level field uses the 6-level matrix (Very Low … Extreme). RAG
+  // fields (Green/Amber/Red) must NOT be routed to the risk_level taxonomy —
+  // riskLevelTone('Green') is truthy, so detect by the matrix-only words.
+  if (field.key === 'ragStatus' && field.options?.some((option) => /\bvery\b|extreme/i.test(option))) return activeTaxonomyValues(taxonomies, 'risk_level', field.options)
   if (field.key === 'ragStatus') return activeTaxonomyValues(taxonomies, 'rag', field.options ?? [])
   return field.options ?? []
 }
@@ -1523,133 +1575,11 @@ function SegmentedView({ viewMode, setViewMode }: { viewMode: ViewMode; setViewM
   )
 }
 
-function Dashboard({
-  metrics,
-  items,
-  user,
-  onOpenRegisters,
-}: {
-  metrics: ReturnType<typeof calculateMetrics>
-  items: GovernanceItem[]
-  user: UserProfile
-  onOpenRegisters: (module: ModuleKey) => void
-}) {
-  const topItems = items.slice(0, 7)
-  const executiveWatch = items.filter((item) => item.ragStatus?.includes('Red') || item.ragStatus?.includes('Amber') || item.priority?.includes('High')).slice(0, 6)
-  const overdueItems = items.filter((item) => daysBetween(item.dueDate) < 0).slice(0, 5)
-  const dueSoonItems = items.filter((item) => {
-    const days = daysBetween(item.dueDate)
-    return days >= 0 && days <= 14
-  }).slice(0, 5)
-
-  return (
-    <div className="page-stack">
-      <section className="metric-grid">
-        <MetricCard label="Open" value={metrics.openItems} tone="blue" icon={ClipboardList} />
-        <MetricCard label="Overdue" value={metrics.overdueItems} tone="red" icon={CalendarClock} />
-        <MetricCard label="Due soon" value={metrics.dueSoonItems} tone="amber" icon={Gauge} />
-        <MetricCard label="High priority" value={metrics.highPriorityItems} tone="purple" icon={Sparkles} />
-        <MetricCard label="Stale" value={metrics.staleItems} tone="slate" icon={Activity} />
-      </section>
-
-      <section className="dashboard-grid">
-        <div className="panel wide">
-          <PanelHeader title={`${user.fullName.split(' ')[0]}'s active queue`} icon={UserRound} />
-          <CompactItemList items={topItems} />
-        </div>
-
-        <div className="panel">
-          <PanelHeader title="Executive watch" icon={ShieldCheck} />
-          <CompactItemList items={executiveWatch} compact />
-        </div>
-
-        <div className="panel">
-          <PanelHeader title="Due attention" icon={CalendarClock} />
-          <div className="attention-groups">
-            <div>
-              <h3>Overdue</h3>
-              <CompactItemList items={overdueItems} compact />
-            </div>
-            <div>
-              <h3>Due in 14 days</h3>
-              <CompactItemList items={dueSoonItems} compact />
-            </div>
-          </div>
-        </div>
-
-        <div className="panel wide">
-          <PanelHeader title="Module coverage" icon={Table2} />
-          <div className="module-health-grid">
-            {moduleConfigs.map((module) => {
-              const Icon = moduleIcons[module.key]
-              const count = metrics.moduleCounts[module.key]
-              return (
-                <button key={module.key} onClick={() => onOpenRegisters(module.key)}>
-                  <Icon size={16} />
-                  <span>{module.shortLabel}</span>
-                  <strong>{count}</strong>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        <div className="panel">
-          <PanelHeader title="RAG and priority" icon={Gauge} />
-          <div className="rag-list">
-            {Object.entries(metrics.ragCounts).slice(0, 8).map(([key, value]) => (
-              <div key={key}>
-                <span>{key}</span>
-                <strong>{value}</strong>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-    </div>
-  )
-}
-
-function MetricCard({ label, value, tone, icon: Icon }: { label: string; value: number; tone: string; icon: typeof Gauge }) {
-  return (
-    <div className={`metric-card tone-${tone}`}>
-      <Icon size={18} />
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  )
-}
-
 function PanelHeader({ title, icon: Icon }: { title: string; icon: typeof Gauge }) {
   return (
     <div className="panel-header">
       <Icon size={18} />
       <h2>{title}</h2>
-    </div>
-  )
-}
-
-function CompactItemList({ items, compact = false }: { items: GovernanceItem[]; compact?: boolean }) {
-  if (items.length === 0) {
-    return <div className="empty-state">No records in this view.</div>
-  }
-
-  return (
-    <div className={`compact-list ${compact ? 'is-compact' : ''}`}>
-      {items.map((item) => (
-        <article key={item.id}>
-          <div>
-            <span className="code">{item.itemCode}</span>
-            <strong>{item.title}</strong>
-            {!compact && <p>{item.summary}</p>}
-          </div>
-          <div className="item-meta">
-            <StatusPill item={item} />
-            <span>{item.ownerName ?? 'Unassigned'}</span>
-            <span>{formatDate(item.dueDate)}</span>
-          </div>
-        </article>
-      ))}
     </div>
   )
 }
@@ -3093,14 +3023,15 @@ function ReportingPage({ items, user }: { items: GovernanceItem[]; user: UserPro
 
   return (
     <div className="page-stack">
+      <GovernanceReport items={items} user={user} persona={reportType} onPersonaChange={setReportType} />
+
+      {reportMessage && <div className="notice-line">{reportMessage}</div>}
+      {reportError && <div className="error-line">{reportError}</div>}
+
+      <details className="rs-tools">
+        <summary>Narrative draft, snapshots & history — {reportTypeLabel(reportType)}</summary>
+        <div className="page-stack" style={{ marginTop: 10 }}>
       <section className="report-controls">
-        <div className="segmented large">
-          {(['team_leads', 'stakeholders', 'executive'] as ReportType[]).map((type) => (
-            <button key={type} className={reportType === type ? 'is-active' : ''} onClick={() => setReportType(type)}>
-              {reportTypeLabel(type)}
-            </button>
-          ))}
-        </div>
         <div className="report-actions">
           <button className="button primary" onClick={generateReport} disabled={isGenerating}>
             <Bot size={16} />
@@ -3116,8 +3047,6 @@ function ReportingPage({ items, user }: { items: GovernanceItem[]; user: UserPro
           </button>
         </div>
       </section>
-      {reportMessage && <div className="notice-line">{reportMessage}</div>}
-      {reportError && <div className="error-line">{reportError}</div>}
 
       <section className="report-layout">
         <article className="report-document">
@@ -3183,6 +3112,8 @@ function ReportingPage({ items, user }: { items: GovernanceItem[]; user: UserPro
           </div>
         </article>
       </section>
+        </div>
+      </details>
     </div>
   )
 }
