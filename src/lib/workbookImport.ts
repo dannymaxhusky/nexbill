@@ -52,6 +52,11 @@ const fieldMap: Record<ModuleKey, Record<string, ItemImportTarget>> = {
     'Risk Impact Area': 'details.impactArea',
     'Risk Mitgation (how to reduce risk)': 'details.mitigation',
     'Contingency Plan (If risk materalises)': 'details.contingency',
+    // Probability × impact scores feed the dashboard risk heatmap.
+    'Mitigated Risk Probability': 'details.mitigatedProbability',
+    'Mitigated Risk Impact': 'details.mitigatedImpact',
+    'Unmitigated Risk Rating': 'details.unmitigatedRating',
+    'Risk Response Strategy': 'details.responseStrategy',
   },
   issues: {
     'Issue ID': 'itemCode',
@@ -141,6 +146,8 @@ const fieldMap: Record<ModuleKey, Record<string, ItemImportTarget>> = {
   scope_changes: {
     'CR ID': 'itemCode',
     Title: 'title',
+    // Workbook v1.0 (Jun 2026) renamed "Comments/Next Steps" to "Comments".
+    Comments: 'summary',
     'Comments/Next Steps': 'summary',
     'Current Phase': 'status',
     'DT Owner': 'ownerName',
@@ -201,6 +208,13 @@ function normalizeValue(value: unknown) {
   return String(value).trim()
 }
 
+// Workbook headers may contain line breaks or doubled spaces (e.g. "Risk Mitgation \n(how to reduce risk)").
+// Collapse all whitespace runs to a single space so they match the configured header names.
+function normalizeHeader(value: unknown) {
+  if (value === null || value === undefined) return ''
+  return String(value).replace(/\s+/g, ' ').trim()
+}
+
 export async function previewWorkbook(file: File): Promise<ImportPreview[]> {
   const previews: ImportPreview[] = []
 
@@ -229,6 +243,8 @@ export async function previewWorkbook(file: File): Promise<ImportPreview[]> {
           }
 
           for (const [header, target] of Object.entries(fieldMap[module.key])) {
+            // Skip headers the workbook no longer carries so existing values are not wiped on re-import.
+            if (!(header in row)) continue
             const value = row[header]
             if (target.startsWith('details.')) {
               item.details[target.replace('details.', '')] = normalizeValue(value)
@@ -243,12 +259,17 @@ export async function previewWorkbook(file: File): Promise<ImportPreview[]> {
             }
           }
 
+          // Template residue rows (e.g. only a default "New" status from the dropdown) carry no ID,
+          // title, or summary. Drop them instead of generating placeholder records.
+          if (!item.itemCode && !item.title && !item.summary) return null
+
           item.itemCode = item.itemCode || `${String(index + 1).padStart(4, '0')}-NB-${module.codePrefix}`
           item.title = item.title || `${module.shortLabel} item ${index + 1}`
           item.summary = item.summary || item.title
           item.sourceRef!.sourceId = item.itemCode
           return item
         })
+        .filter((item): item is GovernanceItem => item !== null)
 
       const availableHeaders = Object.keys(rows[0] ?? {})
       const missingHeaders = module.importHeaders.filter((header) => !availableHeaders.includes(header))
@@ -273,15 +294,16 @@ function assignImportField(item: GovernanceItem, target: Exclude<ItemImportTarge
 }
 
 function rowsToObjects(rows: unknown[][], expectedHeaders: string[]) {
+  const normalizedExpected = expectedHeaders.map((header) => normalizeHeader(header))
   const headerIndex = rows.findIndex((row) => {
-    const values = row.map((cell) => normalizeValue(cell))
-    const matches = expectedHeaders.filter((header) => values.includes(header)).length
-    return matches >= Math.min(3, expectedHeaders.length || 3)
+    const values = row.map((cell) => normalizeHeader(cell))
+    const matches = normalizedExpected.filter((header) => values.includes(header)).length
+    return matches >= Math.min(3, normalizedExpected.length || 3)
   })
 
   if (headerIndex < 0) return []
 
-  const headers = rows[headerIndex].map((cell) => normalizeValue(cell))
+  const headers = rows[headerIndex].map((cell) => normalizeHeader(cell))
   return rows.slice(headerIndex + 1).map((row) =>
     Object.fromEntries(headers.map((header, index) => [header, row[index] ?? '']).filter(([header]) => header)),
   ) as Array<Record<string, unknown>>
