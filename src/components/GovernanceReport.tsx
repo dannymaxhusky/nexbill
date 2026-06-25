@@ -1,5 +1,5 @@
 import { Activity, BarChart3, ChevronRight, RotateCcw, UserRound, X } from 'lucide-react'
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { riskLevelRank, riskLevelTone, riskMatrixRows } from '../data/riskMatrix'
 import { GO_LIVE_DATE, daysBetween, daysToGoLive, formatDate, isClosedStatus, priorityRank, sortItems } from '../lib/status'
@@ -174,15 +174,14 @@ function Donut({ segments, centre }: { segments: Array<{ value: number; color: s
   const total = Math.max(1, segments.reduce((sum, segment) => sum + segment.value, 0))
   const radius = 40
   const circumference = 2 * Math.PI * radius
-  let offset = 0
   return (
     <svg viewBox="0 0 120 120" className="rs-donut" role="img" aria-label="Benefits confidence">
       <circle cx="60" cy="60" r={radius} fill="none" stroke="#e2e8f0" strokeWidth="16" />
       {segments.map((segment, index) => {
+        const offset = segments.slice(0, index).reduce((sum, prev) => sum + prev.value, 0)
         const length = (segment.value / total) * circumference
         const dash = `${length} ${circumference - length}`
         const rotation = (offset / total) * 360 - 90
-        offset += segment.value
         return <circle key={index} cx="60" cy="60" r={radius} fill="none" stroke={segment.color} strokeWidth="16" strokeDasharray={dash} transform={`rotate(${rotation} 60 60)`} />
       })}
       <text x="60" y="66" textAnchor="middle" fontSize="20" fontFamily="var(--font-display)" fill="#0f172a">{centre}</text>
@@ -845,24 +844,30 @@ function EditableNarrative({ storageKey, autoText }: { storageKey: string; autoT
   }
 
   const [edited, setEdited] = useState<boolean>(() => readStored() !== null)
-  const [value, setValue] = useState<string>(() => readStored() ?? autoText)
+  const [savedText, setSavedText] = useState<string>(() => readStored() ?? '')
+  const [draft, setDraft] = useState('')
   const [isEditing, setIsEditing] = useState(false)
 
-  // Keep the displayed text in sync with the live auto-generated narrative until
-  // the user has taken ownership by editing it.
-  useEffect(() => {
-    if (!edited) setValue(autoText)
-  }, [autoText, edited])
+  // Once the user takes ownership we show their saved text; until then the
+  // displayed narrative tracks the live auto-generated text. Deriving it here
+  // (rather than syncing into state) keeps it in sync without an effect.
+  const displayText = edited ? savedText : autoText
+
+  function startEditing() {
+    setDraft(displayText)
+    setIsEditing(true)
+  }
 
   function commit(next: string) {
-    setValue(next)
+    setSavedText(next)
     setEdited(true)
+    setIsEditing(false)
     if (typeof window !== 'undefined') window.localStorage.setItem(storageKey, next)
   }
 
   function resetToAuto() {
     setEdited(false)
-    setValue(autoText)
+    setSavedText('')
     setIsEditing(false)
     if (typeof window !== 'undefined') window.localStorage.removeItem(storageKey)
   }
@@ -872,13 +877,13 @@ function EditableNarrative({ storageKey, autoText }: { storageKey: string; autoT
       <div className="rs-narrative is-editing">
         <textarea
           className="rs-narrative-input"
-          value={value}
+          value={draft}
           autoFocus
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => setDraft(event.target.value)}
           rows={4}
         />
         <div className="rs-narrative-actions">
-          <button type="button" className="rs-drill" onClick={() => { commit(value); setIsEditing(false) }}>Save</button>
+          <button type="button" className="rs-drill" onClick={() => commit(draft)}>Save</button>
           <button type="button" className="rs-narrative-reset" onClick={resetToAuto}>
             <RotateCcw size={13} /> Reset to auto
           </button>
@@ -889,9 +894,9 @@ function EditableNarrative({ storageKey, autoText }: { storageKey: string; autoT
 
   return (
     <div className="rs-narrative">
-      <p className="rs-narrative-text">{value}</p>
+      <p className="rs-narrative-text">{displayText}</p>
       <div className="rs-narrative-actions">
-        <button type="button" className="rs-drill" onClick={() => setIsEditing(true)}>Edit</button>
+        <button type="button" className="rs-drill" onClick={startEditing}>Edit</button>
         {edited && (
           <button type="button" className="rs-narrative-reset" onClick={resetToAuto}>
             <RotateCcw size={13} /> Reset to auto
